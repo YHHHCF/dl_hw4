@@ -54,8 +54,8 @@ def get_loader(mode, batch_size):
         label_path = val_label_path
         sf = False
 
-    data = np.load(data_path, encoding='bytes')
-    label = np.load(label_path, encoding='bytes')
+    data = np.load(data_path, allow_pickle=True, encoding='bytes')
+    label = np.load(label_path, allow_pickle=True, encoding='bytes')
 
     if mode == 'test':
         label = label[:len(data)]

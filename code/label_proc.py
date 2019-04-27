@@ -68,21 +68,21 @@ def process_label(char_idx, label):
 
 
 # take an array and convert it to sentence
-def toSentenct(arr, idx_char):
+def toSentence(arr):
+    idx_char = np.load(idx_char_path, allow_pickle=True)
+    idx_char = idx_char.item()
     sentence = []
     for e in arr:
-        sentence.append(idx_char[e])
+        sentence.append(idx_char[int(e)])
 
     sentence = ''.join(sentence)
-    print(sentence)
-    return
+    return sentence
 
 
 train_label_path = '../data/train_transcripts.npy'
 val_label_path = '../data/dev_transcripts.npy'
-
-train_label = np.load(train_label_path, encoding='bytes')
-val_label = np.load(val_label_path, encoding='bytes')
+idx_char_path = '../data/idx_char.npy'
+char_idx_path = '../data/char_idx.npy'
 
 
 if __name__ == '__main__':
@@ -108,10 +108,15 @@ if __name__ == '__main__':
         idx_char[i] = letters[i]
         char_idx[letters[i]] = i
 
+    np.save(idx_char_path, idx_char)
+    np.save(char_idx_path, char_idx)
     print("idx_char:", idx_char)
     print("char_idx:", char_idx)
 
     # process the labels
+    train_label = np.load(train_label_path, allow_pickle=True, encoding='bytes')
+    val_label = np.load(val_label_path, allow_pickle=True, encoding='bytes')
+
     train_label_embeds = process_label(char_idx, train_label)
     val_label_embeds = process_label(char_idx, val_label)
 

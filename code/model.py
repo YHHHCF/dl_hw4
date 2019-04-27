@@ -3,41 +3,59 @@ import torch.nn as nn
 import torch.nn.utils.rnn as rnn
 import numpy as np
 
+h_size = 20
+o_size = 3
+num_letter = 34
+embed_dim = 64
+
 
 class LAS(nn.Module):
     def __init__(self):
         super(LAS, self).__init__()
+        global h_size
         self.listener = Listener()
-        self.atten = Attention()
         self.speller = Speller()
 
-        self.embedding = nn.Embedding(34, 64)
+        self.embedding = nn.Embedding(num_letter, embed_dim)
 
     def forward(self, utter_list, targets):
-        print("db:", utter_list[0].shape)
-        k, v, lens = self.listener(utter_list)
+        b_size = len(utter_list)
+        hk, hv, h_lens = self.listener(utter_list)
 
-        for target in targets:
-            mask_len = len(target)
-            s1 = init((3, 3))
-            s2 = init((3, 3))
-            target = self.embedding(target)  # shape = (mask_len, embed_dim)
+        # print("hk {}, hv {}, lens {}".format(hk.shape, hv.shape, h_lens))
 
-            for idx in range(len(target)):
-                # get attention and mask it
-                c = self.atten(k, v, s1, s2)
-                # go through speller and get output
-                out = self.speller(target[idx], c, s1, s2)
+        y_targets = []  # the target list to be returned(skip position 0)
+        emb_targets = []
+        for t in targets:
+            y_targets.append(t[1:])
+            t = self.embedding(t)
+            emb_targets.append(t)
+        packed_targets = rnn.pad_sequence(emb_targets)  # shape (max(l), b_size, emb-dim)
 
-        return out
+        sh = init((b_size, o_size))
+        sc = init((b_size, o_size))
+        c = torch.zeros(b_size, o_size)
+
+        in_mask = get_mask(h_lens)
+
+        predictions = torch.zeros((b_size, len(packed_targets) - 1, num_letter))
+        for idx in range(len(packed_targets) - 1):  # -1 because we do not use } as input
+            y_in = packed_targets[idx]  # shape is (b_size, emb_dim)
+
+            # take in target, c, sh, sc for this step and return pred, c, sh, sc for next step
+            # pred should be compared with the target at next timestamp
+            pred, c, sh, sc = self.speller(hk, hv, y_in, c, sh, sc, in_mask)
+            predictions[:, idx, :] = pred
+
+        return predictions, y_targets
 
 
 # the listener
 class Listener(nn.Module):
     def __init__(self):
         super(Listener, self).__init__()
-        h_size = 20
-        o_size = 3
+        global h_size
+        global o_size
         self.rnn = nn.LSTM(input_size=40, hidden_size=h_size, num_layers=1, bidirectional=False)
         self.conv1 = nn.Conv1d(in_channels=h_size, out_channels=h_size, kernel_size=2, stride=2)
         self.rnn1 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=False)
@@ -81,6 +99,50 @@ class Listener(nn.Module):
         return k, v, lens
 
 
+# the speller with attention
+class Speller(nn.Module):
+    def __init__(self):
+        super(Speller, self).__init__()
+        global o_size
+        self.rnnCell = nn.LSTMCell((o_size + embed_dim), o_size)
+
+        self.sm = nn.Softmax(dim=1)
+
+        self.linear1 = nn.Linear(o_size, num_letter)
+        self.linear2 = nn.Linear(o_size, num_letter)
+        self.activate = nn.ReLU()
+        self.linear3 = nn.Linear(num_letter, num_letter)
+
+    # _1 means params from time t-1
+    # return values are all for time t
+    def forward(self, hk, hv, y_1, c_1, sh_1, sc_1, mask):
+        global o_size
+
+        # calculate state for t
+        sh, sc = self.rnnCell(torch.cat((y_1, c_1), dim=1), (sh_1, sc_1))
+
+        # calculate attention
+        temp = torch.bmm(hk, sc.reshape(sc.size(0), sc.size(1), 1))
+        temp = temp.reshape(temp.size(0), temp.size(1))
+        temp = self.sm(temp)
+
+        temp = temp * mask
+        temp /= torch.sum(temp, dim=1).reshape(-1, 1)
+
+        attention = temp.reshape(temp.size(0), 1, temp.size(1))
+
+        c = torch.bmm(attention, hv)
+        c = c.reshape((c.size(0), c.size(2)))
+
+        # calculate prediction
+        out = self.linear1(sh)
+        out += self.linear2(c)
+        out = self.activate(out)
+        out = self.linear3(out)
+        out = self.sm(out)
+        return out, c, sh, sc
+
+
 def trans(data, flag):
     if flag:
         data = torch.transpose(data, 0, 1)
@@ -97,46 +159,14 @@ def init(shape):
     return tensor
 
 
-# attention algorithm
-class Attention(nn.Module):
-    def __init__(self):
-        super(Attention, self).__init__()
-        self.sm = nn.Softmax(dim=1)  # debug
+def get_mask(h_lens):
+    global o_size
+    b_size = len(h_lens)
+    mask = torch.zeros((b_size, h_lens[0]))
+    for i in range(b_size):
+        mask[i][:h_lens[i]] = 1
 
-    # k, v corresponds to h and s1, s2 corresponds to s
-    def forward(self, k, v, s1, s2):
-        print("k", k.shape)
-        c = torch.mean(v, dim=1)  # use average now instead of attention
-        # s = s1 * s2  # to be debug
-        # ek = torch.bmm(k, s)
-        # print("ek", ek.shape)
-        # ek = self.sm(ek)
-
-        return c
-
-
-# the speller
-class Speller(nn.Module):
-    def __init__(self):
-        super(Speller, self).__init__()
-        self.linear1 = nn.Linear(1, 1)
-        self.linear2 = nn.Linear(1, 1)
-        self.linear3 = nn.Linear(1, 1)
-        self.linear4 = nn.Linear(1, 1)
-
-        self.rnnCell = nn.LSTMCell(3, 32)
-
-    def forward(self, y_1, c_1, s1_1, s2_1):
-        print(y_1.shape)
-        print(c_1.shape)
-        print(s1_1.shape)
-        print(s2_1.shape)
-        s1, s2 = self.rnnCell(torch.cat(y_1, c_1), (s1_1, s2_1))
-        out = self.linear1(s1)
-        out += self.linear2(s2)
-        out += self.linear3(c_1)
-        out = self.linear4(out)
-        return out
+    return mask
 
 
 if __name__ == '__main__':
