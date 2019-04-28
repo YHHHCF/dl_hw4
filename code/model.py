@@ -3,10 +3,10 @@ import torch.nn as nn
 import torch.nn.utils.rnn as rnn
 import numpy as np
 
-h_size = 20
-o_size = 3
+h_size = 128
+o_size = 128
 num_letter = 34
-embed_dim = 64
+embed_dim = 512
 
 
 class LAS(nn.Module):
@@ -18,11 +18,11 @@ class LAS(nn.Module):
 
         self.embedding = nn.Embedding(num_letter, embed_dim)
 
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+
     def forward(self, utter_list, targets):
         b_size = len(utter_list)
         hk, hv, h_lens = self.listener(utter_list)
-
-        # print("hk {}, hv {}, lens {}".format(hk.shape, hv.shape, h_lens))
 
         y_targets = []  # the target list to be returned(skip position 0)
         emb_targets = []
@@ -35,10 +35,15 @@ class LAS(nn.Module):
         sh = init((b_size, o_size))
         sc = init((b_size, o_size))
         c = torch.zeros(b_size, o_size)
-
         in_mask = get_mask(h_lens)
-
         predictions = torch.zeros((b_size, len(packed_targets) - 1, num_letter))
+
+        sh = sh.to(self.device)
+        sc = sc.to(self.device)
+        c = c.to(self.device)
+        in_mask = in_mask.to(self.device)
+        predictions = predictions.to(self.device)
+        
         for idx in range(len(packed_targets) - 1):  # -1 because we do not use } as input
             y_in = packed_targets[idx]  # shape is (b_size, emb_dim)
 
@@ -56,8 +61,8 @@ class Listener(nn.Module):
         super(Listener, self).__init__()
         global h_size
         global o_size
-        self.rnn = nn.LSTM(input_size=40, hidden_size=h_size, num_layers=1, bidirectional=False)
-        self.conv1 = nn.Conv1d(in_channels=h_size, out_channels=h_size, kernel_size=2, stride=2)
+        self.rnn = nn.LSTM(input_size=40, hidden_size=h_size, num_layers=1, bidirectional=True)
+        self.conv1 = nn.Conv1d(in_channels=2 * h_size, out_channels=h_size, kernel_size=2, stride=2)
         self.rnn1 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=False)
         self.conv2 = nn.Conv1d(in_channels=h_size, out_channels=h_size, kernel_size=2, stride=2)
         self.rnn2 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=False)
