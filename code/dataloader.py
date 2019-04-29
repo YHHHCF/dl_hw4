@@ -61,7 +61,8 @@ def get_loader(mode, batch_size):
         label = label[:len(data)]
 
     dataset = UtterDataset(data, label)
-    loader = DataLoader(dataset, shuffle=sf, batch_size=batch_size, collate_fn=collate_utter)
+    loader = DataLoader(dataset, shuffle=sf, batch_size=batch_size, drop_last=True, 
+        collate_fn=collate_utter)
 
     return loader
 

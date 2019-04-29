@@ -6,12 +6,14 @@ from dataloader import *
 from model import *
 from label_proc import *
 from Levenshtein import distance
+from tensorboardX import SummaryWriter
 
 
-def train(epochs, train_loader, val_loader, model, optim):
+def train(epochs, train_loader, val_loader, model, optim, writer):
     global b_size
     model.train()
 
+    idx = 0
     for e in range(epochs):
         print("begin epoch {}  ===============".format(e))
         for inputs, targets in train_loader:
@@ -35,7 +37,11 @@ def train(epochs, train_loader, val_loader, model, optim):
 
             print("loss: {}, distance: {}".format((loss / b_size), (dis / b_size)))
 
-        val_dis = val(model, val_loader)
+            writer.add_scalar('train/loss', (loss / b_size), idx)
+            writer.add_scalar('train/distance', (dis / b_size), idx)
+            idx += 1
+
+        val_dis = val(model, val_loader, writer, e)
         model.train()
 
         if val_dis < best_dis:
@@ -45,7 +51,7 @@ def train(epochs, train_loader, val_loader, model, optim):
 
 
 # validation
-def val(model, val_loader):
+def val(model, val_loader, writer, ep):
     global b_size
     model.eval()
 
@@ -77,6 +83,8 @@ def val(model, val_loader):
     total_distance /= cnt
     
     print("Val loss: {}, distance: {}".format(total_loss, total_distance))
+    writer.add_scalar('val/loss', total_loss, ep)
+    writer.add_scalar('val/distance', total_distance, ep)
     return total_distance
 
 
@@ -88,12 +96,30 @@ def save_ckpt(model, optim, val_dis):
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optim.state_dict(),
     }, path)
-    
     return
 
 
+def load_ckpt(path):
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    new_model = LAS()
+    pretrained_ckpt = torch.load(path)
+    new_model.load_state_dict(pretrained_ckpt['model_state_dict'])
+    
+    new_optimizer = torch.optim.Adam(new_model.parameters(), lr=1e-3)
+    new_optimizer.load_state_dict(pretrained_ckpt['optimizer_state_dict'])
+
+    for state in new_optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(DEVICE)
+
+    print("loaded a pretrained model with distance:", pretrained_ckpt['val_dis'])
+
+    return new_model, new_optimizer
+
+
 if __name__ == '__main__':
-    b_size = 8
+    b_size = 256
     epochs = 20
     best_dis = 1
 
@@ -107,7 +133,9 @@ if __name__ == '__main__':
 
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.to(DEVICE)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    train(epochs, train_loader, val_loader, model, optimizer)
+    writer = SummaryWriter()
+
+    train(epochs, train_loader, val_loader, model, optimizer, writer)
 
