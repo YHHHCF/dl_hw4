@@ -32,6 +32,10 @@ def train(epochs, train_loader, val_loader, model, optim, writer):
                 target_str = toSentence(target)
                 dis += distance(pred_str, target_str) / len(pred_str)
 
+                # if i == 0:
+                #     print("pred:", pred_str)
+                #     print("target:", target_str)
+
             loss.backward()
             optim.step()
 
@@ -99,19 +103,29 @@ def save_ckpt(model, optim, val_dis):
     return
 
 
-def load_ckpt(path):
+def load_ckpt(path, mode='train'):
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     new_model = LAS()
     pretrained_ckpt = torch.load(path)
     new_model.load_state_dict(pretrained_ckpt['model_state_dict'])
     
-    new_optimizer = torch.optim.Adam(new_model.parameters(), lr=1e-3)
-    new_optimizer.load_state_dict(pretrained_ckpt['optimizer_state_dict'])
+    if mode == 'train':
+        global lr
+        global best_dis
 
-    for state in new_optimizer.state.values():
-        for k, v in state.items():
-            if isinstance(v, torch.Tensor):
-                state[k] = v.to(DEVICE)
+        new_optimizer = torch.optim.Adam(new_model.parameters(), lr=lr)
+        new_optimizer.load_state_dict(pretrained_ckpt['optimizer_state_dict'])
+
+        for state in new_optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(DEVICE)
+
+        if pretrained_ckpt['val_dis'] < best_dis:
+            best_dis = pretrained_ckpt['val_dis']
+
+    else:
+        new_optimizer = None
 
     print("loaded a pretrained model with distance:", pretrained_ckpt['val_dis'])
 
@@ -122,18 +136,26 @@ if __name__ == '__main__':
     b_size = 256
     epochs = 20
     best_dis = 1
+    lr = 1e-2
+
+    if_pretrain = True
+    path = './../result/model_exp1.t7'
 
     train_loader = get_loader('train', b_size)
     val_loader = get_loader('val', b_size)
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model = LAS()
+    if if_pretrain:
+        model, optimizer = load_ckpt(path, 'train')
+    else:
+        model = LAS()
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
     model = model.to(DEVICE)
 
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.to(DEVICE)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     writer = SummaryWriter()
 

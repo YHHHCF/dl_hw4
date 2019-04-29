@@ -63,6 +63,7 @@ class LAS(nn.Module):
             predictions[:, idx, :] = pred
 
         return predictions, y_targets
+        # return predictions
 
 
 # the listener
