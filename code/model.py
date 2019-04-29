@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn
-import numpy as np
 
 h_size = 128
 o_size = 128
@@ -32,16 +31,27 @@ class LAS(nn.Module):
             emb_targets.append(t)
         packed_targets = rnn.pad_sequence(emb_targets)  # shape (max(l), b_size, emb-dim)
 
-        sh = init((b_size, o_size))
-        sc = init((b_size, o_size))
-        c = torch.zeros(b_size, o_size)
-        in_mask = get_mask(h_lens)
-        predictions = torch.zeros((b_size, len(packed_targets) - 1, num_letter))
+        sh = []
+        sc = []
+        sh0 = init((b_size, o_size)).to(self.device)
+        sc0 = init((b_size, o_size)).to(self.device)
+        sh1 = init((b_size, o_size)).to(self.device)
+        sc1 = init((b_size, o_size)).to(self.device)
+        sh2 = init((b_size, o_size)).to(self.device)
+        sc2 = init((b_size, o_size)).to(self.device)
 
-        sh = sh.to(self.device)
-        sc = sc.to(self.device)
-        c = c.to(self.device)
+        sh.append(sh0)
+        sh.append(sh1)
+        sh.append(sh2)
+        sc.append(sc0)
+        sc.append(sc1)
+        sc.append(sc2)
+
+        c = torch.zeros(b_size, o_size).to(self.device)
+
+        in_mask = get_mask(h_lens)
         in_mask = in_mask.to(self.device)
+        predictions = torch.zeros((b_size, len(packed_targets) - 1, num_letter))
         predictions = predictions.to(self.device)
         
         for idx in range(len(packed_targets) - 1):  # -1 because we do not use } as input
@@ -66,9 +76,13 @@ class Listener(nn.Module):
         self.rnn1 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=False)
         self.conv2 = nn.Conv1d(in_channels=h_size, out_channels=h_size, kernel_size=2, stride=2)
         self.rnn2 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=False)
+        self.conv3 = nn.Conv1d(in_channels=h_size, out_channels=h_size, kernel_size=2, stride=2)
+        self.rnn3 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=False)
 
         self.kLinear = nn.Linear(h_size, o_size)
         self.vLinear = nn.Linear(h_size, o_size)
+
+        self.bn = nn.BatchNorm1d(h_size)
 
     def forward(self, utter_list):  # list
         # concat input on dim=0
@@ -88,15 +102,24 @@ class Listener(nn.Module):
         # go through pBLSTM
         padded_output = trans(padded_output, True)
         padded_output = self.conv1(padded_output)
+        padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn1(padded_output)
+
         padded_output = trans(padded_output, True)
         padded_output = self.conv2(padded_output)
+        padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn2(padded_output)
 
+        padded_output = trans(padded_output, True)
+        padded_output = self.conv3(padded_output)
+        padded_output = self.bn(padded_output)
+        padded_output = trans(padded_output, False)
+        padded_output, _ = self.rnn3(padded_output)
+
         padded_output = torch.transpose(padded_output, 0, 1)
-        lens = (lens / 4)
+        lens = (lens / 8)
 
         k = self.kLinear(padded_output)
         v = self.vLinear(padded_output)
@@ -109,25 +132,47 @@ class Speller(nn.Module):
     def __init__(self):
         super(Speller, self).__init__()
         global o_size
-        self.rnnCell = nn.LSTMCell((o_size + embed_dim), o_size)
+        self.rnnCell0 = nn.LSTMCell((o_size + embed_dim), o_size)
+        self.rnnCell1 = nn.LSTMCell(o_size, o_size)
+        self.rnnCell2 = nn.LSTMCell(o_size, o_size)
 
         self.sm = nn.Softmax(dim=1)
 
-        self.linear1 = nn.Linear(o_size, num_letter)
-        self.linear2 = nn.Linear(o_size, num_letter)
+        self.linear1 = nn.Linear(o_size, h_size)
+        self.linear2 = nn.Linear(o_size, h_size)
         self.activate = nn.ReLU()
-        self.linear3 = nn.Linear(num_letter, num_letter)
+        self.linear3 = nn.Linear(h_size, num_letter)
+
+        self.bn = nn.BatchNorm1d(h_size)
 
     # _1 means params from time t-1
     # return values are all for time t
     def forward(self, hk, hv, y_1, c_1, sh_1, sc_1, mask):
         global o_size
 
+        sh = []
+        sc = []
+
         # calculate state for t
-        sh, sc = self.rnnCell(torch.cat((y_1, c_1), dim=1), (sh_1, sc_1))
+        sh0, sc0 = self.rnnCell0(torch.cat((y_1, c_1), dim=1), (sh_1[0], sc_1[0]))
+        # sh0 = self.bn(sh0)
+        # sc0 = self.bn(sc0)
+        sh1, sc1 = self.rnnCell1(sh0, (sh_1[1], sc_1[1]))
+        # sh1 = self.bn(sh1)
+        # sc1 = self.bn(sc1)
+        sh2, sc2 = self.rnnCell2(sh1, (sh_1[2], sc_1[2]))
+        # sh2 = self.bn(sh2)
+        # sc2 = self.bn(sc2)
+
+        sh.append(sh0)
+        sh.append(sh1)
+        sh.append(sh2)
+        sc.append(sc0)
+        sc.append(sc1)
+        sc.append(sc2)
 
         # calculate attention
-        temp = torch.bmm(hk, sc.reshape(sc.size(0), sc.size(1), 1))
+        temp = torch.bmm(hk, sc2.reshape(sc2.size(0), sc2.size(1), 1))
         temp = temp.reshape(temp.size(0), temp.size(1))
         temp = self.sm(temp)
 
@@ -140,8 +185,9 @@ class Speller(nn.Module):
         c = c.reshape((c.size(0), c.size(2)))
 
         # calculate prediction
-        out = self.linear1(sh)
+        out = self.linear1(sh2)
         out += self.linear2(c)
+        out = self.bn(out)
         out = self.activate(out)
         out = self.linear3(out)
         out = self.sm(out)

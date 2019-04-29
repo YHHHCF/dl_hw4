@@ -7,15 +7,15 @@ from model import *
 from label_proc import *
 from Levenshtein import distance
 
+
 def train(epochs, train_loader, val_loader, model, optim):
     global b_size
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     model.train()
 
     for e in range(epochs):
         print("begin epoch {}  ===============".format(e))
         for inputs, targets in train_loader:
-            optimizer.zero_grad()
+            optim.zero_grad()
             predictions, y_targets = model(inputs, targets)
 
             # calculate loss and distance and backprop
@@ -31,7 +31,7 @@ def train(epochs, train_loader, val_loader, model, optim):
                 dis += distance(pred_str, target_str) / len(pred_str)
 
             loss.backward()
-            optimizer.step()
+            optim.step()
 
             print("loss: {}, distance: {}".format((loss / b_size), (dis / b_size)))
 
@@ -39,15 +39,14 @@ def train(epochs, train_loader, val_loader, model, optim):
         model.train()
 
         if val_dis < best_dis:
-            save_ckpt(model, optimizer, val_dis)
+            save_ckpt(model, optim, val_dis)
             print("A model is saved!")
-        
     return
+
 
 # validation
 def val(model, val_loader):
     global b_size
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     model.eval()
 
     total_loss = 0.
@@ -64,7 +63,7 @@ def val(model, val_loader):
             for i in range(len(y_targets)):
                 target = y_targets[i]
                 pred = predictions[i][:len(target)]
-                loss += criterion(pred, target)
+                loss += torch.exp(criterion(pred, target))
 
                 pred_str = toSentence(torch.argmax(pred, dim=1))
                 target_str = toSentence(target)
@@ -81,20 +80,20 @@ def val(model, val_loader):
     return total_distance
 
 
-def save_ckpt(model, optimizer, val_dis):
+def save_ckpt(model, optim, val_dis):
     path = './../result/model_exp1.t7'
 
     torch.save({
         'val_dis': val_dis,
         'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
+        'optimizer_state_dict': optim.state_dict(),
     }, path)
     
     return
 
 
 if __name__ == '__main__':
-    b_size = 256
+    b_size = 8
     epochs = 20
     best_dis = 1
 
@@ -108,7 +107,7 @@ if __name__ == '__main__':
 
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.to(DEVICE)
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
     train(epochs, train_loader, val_loader, model, optimizer)
 
