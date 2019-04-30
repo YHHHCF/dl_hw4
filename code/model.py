@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn
 
-h_size = 128
-o_size = 128
+h_size = 256
+o_size = 256
 num_letter = 34
 embed_dim = 512
 
@@ -19,14 +19,17 @@ class LAS(nn.Module):
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    def forward(self, utter_list, targets):
+    def forward(self, utter_list, targets, mode):
         b_size = len(utter_list)
         hk, hv, h_lens = self.listener(utter_list)
 
-        y_targets = []  # the target list to be returned(skip position 0)
+        if mode == 'train':
+            y_targets = []  # the target list to be returned(skip position 0)
+
         emb_targets = []
         for t in targets:
-            y_targets.append(t[1:])
+            if mode == 'train':
+                y_targets.append(t[1:])
             t = self.embedding(t)
             emb_targets.append(t)
         packed_targets = rnn.pad_sequence(emb_targets)  # shape (max(l), b_size, emb-dim)
@@ -62,8 +65,10 @@ class LAS(nn.Module):
             pred, c, sh, sc = self.speller(hk, hv, y_in, c, sh, sc, in_mask)
             predictions[:, idx, :] = pred
 
-        return predictions, y_targets
-        # return predictions
+        if mode == 'train':
+            return predictions, y_targets
+        else:
+            return predictions
 
 
 # the listener
@@ -73,17 +78,17 @@ class Listener(nn.Module):
         global h_size
         global o_size
         self.rnn = nn.LSTM(input_size=40, hidden_size=h_size, num_layers=1, bidirectional=True)
-        self.conv1 = nn.Conv1d(in_channels=2 * h_size, out_channels=h_size, kernel_size=2, stride=2)
-        self.rnn1 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=False)
-        self.conv2 = nn.Conv1d(in_channels=h_size, out_channels=h_size, kernel_size=2, stride=2)
-        self.rnn2 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=False)
-        self.conv3 = nn.Conv1d(in_channels=h_size, out_channels=h_size, kernel_size=2, stride=2)
-        self.rnn3 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=False)
+        self.conv1 = nn.Conv1d(in_channels=2*h_size, out_channels=2*h_size, kernel_size=2, stride=2)
+        self.rnn1 = nn.LSTM(input_size=2*h_size, hidden_size=h_size, num_layers=1, bidirectional=True)
+        self.conv2 = nn.Conv1d(in_channels=2*h_size, out_channels=2*h_size, kernel_size=2, stride=2)
+        self.rnn2 = nn.LSTM(input_size=2*h_size, hidden_size=h_size, num_layers=1, bidirectional=True)
+        self.conv3 = nn.Conv1d(in_channels=2*h_size, out_channels=2*h_size, kernel_size=2, stride=2)
+        self.rnn3 = nn.LSTM(input_size=2*h_size, hidden_size=h_size, num_layers=1, bidirectional=True)
 
-        self.kLinear = nn.Linear(h_size, o_size)
-        self.vLinear = nn.Linear(h_size, o_size)
+        self.kLinear = nn.Linear(2*h_size, o_size)
+        self.vLinear = nn.Linear(2*h_size, o_size)
 
-        self.bn = nn.BatchNorm1d(h_size)
+        self.bn = nn.BatchNorm1d(2*h_size)
 
     def forward(self, utter_list):  # list
         # concat input on dim=0
@@ -156,8 +161,6 @@ class Speller(nn.Module):
 
         # calculate state for t
         sh0, sc0 = self.rnnCell0(torch.cat((y_1, c_1), dim=1), (sh_1[0], sc_1[0]))
-        # sh0 = self.bn(sh0)
-        # sc0 = self.bn(sc0)
         sh1, sc1 = self.rnnCell1(sh0, (sh_1[1], sc_1[1]))
         # sh1 = self.bn(sh1)
         # sc1 = self.bn(sc1)

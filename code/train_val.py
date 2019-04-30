@@ -18,7 +18,7 @@ def train(epochs, train_loader, val_loader, model, optim, writer):
         print("begin epoch {}  ===============".format(e))
         for inputs, targets in train_loader:
             optim.zero_grad()
-            predictions, y_targets = model(inputs, targets)
+            predictions, y_targets = model(inputs, targets, 'train')
 
             # calculate loss and distance and backprop
             loss = 0.
@@ -65,7 +65,7 @@ def val(model, val_loader, writer, ep):
     
     with torch.no_grad():
         for inputs, targets in val_loader:
-            predictions, y_targets = model(inputs, targets)
+            predictions, y_targets = model(inputs, targets, 'train')
 
             # calculate loss and distance and backprop
             loss = 0.
@@ -93,7 +93,7 @@ def val(model, val_loader, writer, ep):
 
 
 def save_ckpt(model, optim, val_dis):
-    path = './../result/model_exp1.t7'
+    path = './../result/model_exp3.t7'
 
     torch.save({
         'val_dis': val_dis,
@@ -133,13 +133,13 @@ def load_ckpt(path, mode='train'):
 
 
 if __name__ == '__main__':
-    b_size = 256
-    epochs = 20
+    b_size = 128
+    epochs = 50
     best_dis = 1
     lr = 1e-2
 
-    if_pretrain = True
-    path = './../result/model_exp1.t7'
+    if_pretrain = False
+    path = './../result/model_exp3.t7'
 
     train_loader = get_loader('train', b_size)
     val_loader = get_loader('val', b_size)

@@ -13,33 +13,27 @@ def test(model, test_loader):
     global b_size
     model.eval()
 
-    cnt = 0
-
     max_len = 200
     
     with torch.no_grad():
+
         for inputs, targets in test_loader:
-            char = [[32, 33]]  # the init target
+            char = []  # the init target
+            char.append(torch.tensor([32, 33]).to(DEVICE))
+            preds = []
+
             for i in range(max_len):
-                predictions = model(inputs, char)
-                print(predictions.shape)
-                pred = predictions[i][:len(target)]
+                pred = model(inputs, char, 'prediction')
+                pred = pred.reshape(pred.shape[2])
+                char = []
+                pred = torch.argmax(pred)
 
-                pred_str = toSentence(torch.argmax(pred, dim=1))
-                target_str = toSentence(target)
-                dis += distance(pred_str, target_str) / len(pred_str)
+                char.append(torch.tensor([pred, 33]).to(DEVICE))
+                preds.append(pred)
 
-            total_loss += (loss / b_size)
-            total_distance += (dis / b_size)
-            cnt += 1
-
-    total_loss /= cnt
-    total_distance /= cnt
-    
-    print("Val loss: {}, distance: {}".format(total_loss, total_distance))
-    writer.add_scalar('val/loss', total_loss, ep)
-    writer.add_scalar('val/distance', total_distance, ep)
-    return total_distance
+            pred_str = toSentence(preds)
+            print(pred_str)
+    return None
 
 
 if __name__ == '__main__':
@@ -53,5 +47,4 @@ if __name__ == '__main__':
     model = model.to(DEVICE)
 
     test(model, test_loader)
-
 
