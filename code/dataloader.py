@@ -59,6 +59,7 @@ def get_loader(mode, batch_size):
 
     if mode == 'test':
         label = label[:len(data)]
+        batch_size = 1
 
     dataset = UtterDataset(data, label)
     loader = DataLoader(dataset, shuffle=sf, batch_size=batch_size, drop_last=True, 

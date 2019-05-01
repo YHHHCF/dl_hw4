@@ -3,11 +3,12 @@ import torch.nn as nn
 import torch.nn.utils.rnn as rnn
 import numpy as np
 
+b_size = 256
 h_size = 128
 o_size = 128
 num_letter = 34
 embed_dim = 256
-tf_rate = 0.1
+tf_rate = 0.0
 
 
 class LAS(nn.Module):
@@ -23,36 +24,27 @@ class LAS(nn.Module):
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
+        self.sh0 = init((b_size, o_size)).to(self.device)
+        self.sc0 = init((b_size, o_size)).to(self.device)
+        self.sh1 = init((b_size, o_size)).to(self.device)
+        self.sc1 = init((b_size, o_size)).to(self.device)
+        self.c0 = init((b_size, o_size)).to(self.device)
+
     def forward(self, utter_list, targets, mode):
+        global tf_rate
         b_size = len(utter_list)
         hk, hv, h_lens = self.listener(utter_list)
 
-        if mode == 'train':
+        if mode == 'train' or mode == 'val':
             y_targets = []  # the target list to be returned(skip position 0)
 
         emb_targets = []
         for t in targets:
-            if mode == 'train':
+            if mode == 'train' or mode == 'val':
                 y_targets.append(t[1:])
             t = self.embedding(t)
             emb_targets.append(t)
         packed_targets = rnn.pad_sequence(emb_targets)  # shape (max(l), b_size, emb-dim)
-
-        sh = []
-        sc = []
-        sh0 = init((b_size, o_size)).to(self.device)
-        sc0 = init((b_size, o_size)).to(self.device)
-        sh1 = init((b_size, o_size)).to(self.device)
-        sc1 = init((b_size, o_size)).to(self.device)
-
-        sh.append(sh0)
-        sh.append(sh1)
-        sc.append(sc0)
-        sc.append(sc1)
-
-        # debug1: train the states above
-
-        c = torch.zeros(b_size, o_size).to(self.device)
 
         in_mask = get_mask(h_lens)
         in_mask = in_mask.to(self.device)
@@ -61,13 +53,28 @@ class LAS(nn.Module):
 
         atten_list = []
 
-        pred = None
+        # forward once for to train the hidden state
+        y_in = packed_targets[0]
+
+        sh = []
+        sc = []
+
+        sh.append(self.sh0)
+        sh.append(self.sh1)
+        sc.append(self.sc0)
+        sc.append(self.sc1)
+
+        pred, c, sh, sc, _ = self.speller(hk, hv, y_in, self.c0, sh, sc, in_mask)
+
         
+        
+        # make predictions
         for idx in range(len(packed_targets) - 1):  # -1 because we do not use } as input
-            if idx == 0:
-                tf_flag = False  # whether use teacher forcing
-            else:
-                tf_flag = (np.random.binomial(1, tf_rate, 1)[0] == 1)
+            if mode == 'val':
+                tf_rate = 1
+
+            # whether use teacher forcing
+            tf_flag = (np.random.binomial(1, tf_rate, 1)[0] == 1)
 
             if tf_flag:
                 y_in = torch.argmax(pred, dim=1)
@@ -82,7 +89,7 @@ class LAS(nn.Module):
 
             atten_list.append(atten_vec)
 
-        if mode == 'train':
+        if mode == 'train' or mode == 'val':
             attention_heat_maps = torch.zeros((len(atten_list), len(atten_list[0])))
             for idx in range(len(atten_list)):
                 attention_heat_maps[idx] = atten_list[idx]
