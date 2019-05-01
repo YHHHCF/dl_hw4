@@ -150,7 +150,7 @@ def load_ckpt(path, mode='train'):
 if __name__ == '__main__':
     epochs = 100
     best_dis = 100
-    lr = 1e-2
+    lr = 1e-3
 
     if_pretrain = False
     path = './../result/model_exp3.t7'

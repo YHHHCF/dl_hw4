@@ -11,7 +11,7 @@ o_size = 128
 
 num_letter = 34
 embed_dim = 256
-tf_rate = 0.1
+tf_rate = 0.0
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -121,12 +121,12 @@ class Listener(nn.Module):
         global h_size
         global o_size
         self.rnn = nn.LSTM(input_size=40, hidden_size=h_size, num_layers=1, bidirectional=True)
-        self.conv1 = nn.Conv1d(in_channels=2*h_size, out_channels=2*h_size, kernel_size=2, stride=2)
-        self.rnn1 = nn.LSTM(input_size=2*h_size, hidden_size=h_size, num_layers=1, bidirectional=True)
-        self.conv2 = nn.Conv1d(in_channels=2*h_size, out_channels=2*h_size, kernel_size=2, stride=2)
-        self.rnn2 = nn.LSTM(input_size=2*h_size, hidden_size=h_size, num_layers=1, bidirectional=True)
-        self.conv3 = nn.Conv1d(in_channels=2*h_size, out_channels=2*h_size, kernel_size=2, stride=2)
-        self.rnn3 = nn.LSTM(input_size=2*h_size, hidden_size=h_size, num_layers=1, bidirectional=True)
+        self.conv1 = nn.Conv1d(in_channels=2*h_size, out_channels=h_size, kernel_size=2, stride=2)
+        self.rnn1 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=True)
+        self.conv2 = nn.Conv1d(in_channels=2*h_size, out_channels=h_size, kernel_size=2, stride=2)
+        self.rnn2 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=True)
+        self.conv3 = nn.Conv1d(in_channels=2*h_size, out_channels=h_size, kernel_size=2, stride=2)
+        self.rnn3 = nn.LSTM(input_size=h_size, hidden_size=h_size, num_layers=1, bidirectional=True)
 
         self.kLinear = nn.Linear(2*h_size, o_size)
         self.vLinear = nn.Linear(2*h_size, o_size)
