@@ -1,17 +1,21 @@
 import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn
+import numpy as np
 
-h_size = 256
-o_size = 256
+h_size = 128
+o_size = 128
 num_letter = 34
-embed_dim = 512
+embed_dim = 256
+tf_rate = 0.1
 
 
 class LAS(nn.Module):
     def __init__(self):
         super(LAS, self).__init__()
         global h_size
+        global tf_rate
+
         self.listener = Listener()
         self.speller = Speller()
 
@@ -40,15 +44,13 @@ class LAS(nn.Module):
         sc0 = init((b_size, o_size)).to(self.device)
         sh1 = init((b_size, o_size)).to(self.device)
         sc1 = init((b_size, o_size)).to(self.device)
-        sh2 = init((b_size, o_size)).to(self.device)
-        sc2 = init((b_size, o_size)).to(self.device)
 
         sh.append(sh0)
         sh.append(sh1)
-        sh.append(sh2)
         sc.append(sc0)
         sc.append(sc1)
-        sc.append(sc2)
+
+        # debug1: train the states above
 
         c = torch.zeros(b_size, o_size).to(self.device)
 
@@ -56,17 +58,35 @@ class LAS(nn.Module):
         in_mask = in_mask.to(self.device)
         predictions = torch.zeros((b_size, len(packed_targets) - 1, num_letter))
         predictions = predictions.to(self.device)
+
+        atten_list = []
+
+        pred = None
         
         for idx in range(len(packed_targets) - 1):  # -1 because we do not use } as input
-            y_in = packed_targets[idx]  # shape is (b_size, emb_dim)
+            if idx == 0:
+                tf_flag = False  # whether use teacher forcing
+            else:
+                tf_flag = (np.random.binomial(1, tf_rate, 1)[0] == 1)
+
+            if tf_flag:
+                y_in = torch.argmax(pred, dim=1)
+                y_in = self.embedding(y_in)
+            else:
+                y_in = packed_targets[idx]  # shape is (b_size, emb_dim)
 
             # take in target, c, sh, sc for this step and return pred, c, sh, sc for next step
             # pred should be compared with the target at next timestamp
-            pred, c, sh, sc = self.speller(hk, hv, y_in, c, sh, sc, in_mask)
+            pred, c, sh, sc, atten_vec = self.speller(hk, hv, y_in, c, sh, sc, in_mask)
             predictions[:, idx, :] = pred
 
+            atten_list.append(atten_vec)
+
         if mode == 'train':
-            return predictions, y_targets
+            attention_heat_maps = torch.zeros((len(atten_list), len(atten_list[0])))
+            for idx in range(len(atten_list)):
+                attention_heat_maps[idx] = atten_list[idx]
+            return predictions, y_targets, attention_heat_maps
         else:
             return predictions
 
@@ -108,19 +128,19 @@ class Listener(nn.Module):
         # go through pBLSTM
         padded_output = trans(padded_output, True)
         padded_output = self.conv1(padded_output)
-        padded_output = self.bn(padded_output)
+        # padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn1(padded_output)
 
         padded_output = trans(padded_output, True)
         padded_output = self.conv2(padded_output)
-        padded_output = self.bn(padded_output)
+        # padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn2(padded_output)
 
         padded_output = trans(padded_output, True)
         padded_output = self.conv3(padded_output)
-        padded_output = self.bn(padded_output)
+        # padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn3(padded_output)
 
@@ -140,7 +160,6 @@ class Speller(nn.Module):
         global o_size
         self.rnnCell0 = nn.LSTMCell((o_size + embed_dim), o_size)
         self.rnnCell1 = nn.LSTMCell(o_size, o_size)
-        self.rnnCell2 = nn.LSTMCell(o_size, o_size)
 
         self.sm = nn.Softmax(dim=1)
 
@@ -164,24 +183,21 @@ class Speller(nn.Module):
         sh1, sc1 = self.rnnCell1(sh0, (sh_1[1], sc_1[1]))
         # sh1 = self.bn(sh1)
         # sc1 = self.bn(sc1)
-        sh2, sc2 = self.rnnCell2(sh1, (sh_1[2], sc_1[2]))
-        # sh2 = self.bn(sh2)
-        # sc2 = self.bn(sc2)
 
         sh.append(sh0)
         sh.append(sh1)
-        sh.append(sh2)
         sc.append(sc0)
         sc.append(sc1)
-        sc.append(sc2)
 
         # calculate attention
-        temp = torch.bmm(hk, sc2.reshape(sc2.size(0), sc2.size(1), 1))
+        temp = torch.bmm(hk, sh1.reshape(sh1.size(0), sh1.size(1), 1))
         temp = temp.reshape(temp.size(0), temp.size(1))
         temp = self.sm(temp)
 
         temp = temp * mask
         temp /= torch.sum(temp, dim=1).reshape(-1, 1)
+
+        atten_vec = temp[0]  # for debug
 
         attention = temp.reshape(temp.size(0), 1, temp.size(1))
 
@@ -189,13 +205,12 @@ class Speller(nn.Module):
         c = c.reshape((c.size(0), c.size(2)))
 
         # calculate prediction
-        out = self.linear1(sh2)
+        out = self.linear1(sh1)
         out += self.linear2(c)
         out = self.bn(out)
         out = self.activate(out)
         out = self.linear3(out)
-        out = self.sm(out)
-        return out, c, sh, sc
+        return out, c, sh, sc, atten_vec
 
 
 def trans(data, flag):
@@ -210,8 +225,22 @@ def trans(data, flag):
 
 def init(shape):
     tensor = torch.zeros(shape)
-    nn.init.xavier_uniform_(tensor)
+    nn.init.uniform_(tensor, -0.1, 0.1)
+    tensor = nn.Parameter(tensor)
     return tensor
+
+
+# init weights using xavier
+def init_weights(m):
+    if type(m) == nn.Conv1d or type(m) == nn.Linear:
+        nn.init.uniform_(m.weight.data, -0.1, 0.1)
+
+    if type(m) == nn.LSTM or type(m) == nn.LSTMCell:
+        for name, param in m.named_parameters():
+            if 'bias' in name:
+                nn.init.constant_(param, 0.0)
+            elif 'weight' in name:
+                nn.init.uniform_(param, -0.1, 0.1)
 
 
 def get_mask(h_lens):

@@ -18,7 +18,7 @@ def train(epochs, train_loader, val_loader, model, optim, writer):
         print("begin epoch {}  ===============".format(e))
         for inputs, targets in train_loader:
             optim.zero_grad()
-            predictions, y_targets = model(inputs, targets, 'train')
+            predictions, y_targets, atten_heatmap = model(inputs, targets, 'train')
 
             # calculate loss and distance and backprop
             loss = 0.
@@ -30,19 +30,25 @@ def train(epochs, train_loader, val_loader, model, optim, writer):
 
                 pred_str = toSentence(torch.argmax(pred, dim=1))
                 target_str = toSentence(target)
-                dis += distance(pred_str, target_str) / len(pred_str)
+                dis += distance(pred_str, target_str)
 
                 # if i == 0:
                 #     print("pred:", pred_str)
                 #     print("target:", target_str)
 
             loss.backward()
+            nn.utils.clip_grad_norm(model.parameters(), 1)
             optim.step()
 
             print("loss: {}, distance: {}".format((loss / b_size), (dis / b_size)))
 
             writer.add_scalar('train/loss', (loss / b_size), idx)
             writer.add_scalar('train/distance', (dis / b_size), idx)
+
+            if idx % 20 == 0:
+                atten_heatmap = atten_heatmap.detach().numpy()
+                atten_heatmap = atten_heatmap.reshape(1, atten_heatmap.shape[0], atten_heatmap.shape[1])
+                writer.add_image('atten_heatmap' + str(idx), atten_heatmap, idx)
             idx += 1
 
         val_dis = val(model, val_loader, writer, e)
@@ -65,7 +71,7 @@ def val(model, val_loader, writer, ep):
     
     with torch.no_grad():
         for inputs, targets in val_loader:
-            predictions, y_targets = model(inputs, targets, 'train')
+            predictions, y_targets, _ = model(inputs, targets, 'train')
 
             # calculate loss and distance and backprop
             loss = 0.
@@ -77,7 +83,7 @@ def val(model, val_loader, writer, ep):
 
                 pred_str = toSentence(torch.argmax(pred, dim=1))
                 target_str = toSentence(target)
-                dis += distance(pred_str, target_str) / len(pred_str)
+                dis += distance(pred_str, target_str)
 
             total_loss += (loss / b_size)
             total_distance += (dis / b_size)
@@ -133,7 +139,7 @@ def load_ckpt(path, mode='train'):
 
 
 if __name__ == '__main__':
-    b_size = 128
+    b_size = 256
     epochs = 50
     best_dis = 1
     lr = 1e-2
@@ -150,6 +156,7 @@ if __name__ == '__main__':
         model, optimizer = load_ckpt(path, 'train')
     else:
         model = LAS()
+        model.apply(init_weights)
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     model = model.to(DEVICE)
