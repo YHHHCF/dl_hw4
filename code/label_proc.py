@@ -45,29 +45,29 @@ def label_statistics(letters, label):
 
 # process the labels into lists of ints
 def process_label(char_idx, label):
-    label_embed = []
+    label_int = []
 
     for sentence in label:
-        st_embed = []
-        st_embed.append(char_idx['{'])
+        st_int = []
+        st_int.append(char_idx['{'])
         first = True
         for word in sentence:
             if not first:
-                st_embed.append(char_idx[' '])
+                st_int.append(char_idx[' '])
             else:
                 first = False
             word = "".join(map(chr, word))
             for letter in word:
-                st_embed.append(char_idx[letter])
+                st_int.append(char_idx[letter])
 
-        st_embed.append(char_idx['}'])
-        st_embed = np.array(st_embed)
+        st_int.append(char_idx['}'])
+        st_int = np.array(st_int)
 
-        label_embed.append(st_embed)
-    return label_embed
+        label_int.append(st_int)
+    return label_int
 
 
-# take an array and convert it to sentence
+# take an int array and convert it to sentence
 def toSentence(arr):
     idx_char = np.load(idx_char_path, allow_pickle=True)
     idx_char = idx_char.item()
@@ -98,9 +98,6 @@ if __name__ == '__main__':
 
     print("There are {} letters: {}".format(len(letters), letters))
 
-    # label_statistics(letters, train_label)
-    # label_statistics(letters, val_label)
-
     # get a map of encoding idx and chars
     idx_char = {}
     char_idx = {}
@@ -113,14 +110,17 @@ if __name__ == '__main__':
     print("idx_char:", idx_char)
     print("char_idx:", char_idx)
 
-    # process the labels
-    train_label = np.load(train_label_path, allow_pickle=True, encoding='bytes')
-    val_label = np.load(val_label_path, allow_pickle=True, encoding='bytes')
+    # process the char labels into int arrays
+    train_label = np.load(train_label_path, allow_pickle=True, encoding='latin1')
+    val_label = np.load(val_label_path, allow_pickle=True, encoding='latin1')
 
-    train_label_embeds = process_label(char_idx, train_label)
-    val_label_embeds = process_label(char_idx, val_label)
+    label_statistics(letters, train_label)
+    label_statistics(letters, val_label)
 
-    np.save('../data/train_label_emb.npy', train_label_embeds)
+    train_label_int = process_label(char_idx, train_label)
+    val_label_int = process_label(char_idx, val_label)
+
+    np.save('../data/train_label_int.npy', train_label_int)
     print("done with train labels")
-    np.save('../data/val_label_emb.npy', val_label_embeds)
+    np.save('../data/val_label_int.npy', val_label_int)
     print("done with val labels")

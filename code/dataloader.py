@@ -3,10 +3,10 @@ from torch.utils.data import Dataset, DataLoader, TensorDataset
 import numpy as np
 
 train_data_path = '../data/train.npy'
-train_label_path = '../data/train_label_emb.npy'
+train_label_path = '../data/train_label_int.npy'
 
 val_data_path = '../data/dev.npy'
-val_label_path = '../data/val_label_emb.npy'
+val_label_path = '../data/val_label_int.npy'
 
 test_data_path = '../data/test.npy'
 
@@ -29,7 +29,7 @@ class UtterDataset(Dataset):
         return len(self.labels)
 
 
-# collate_phon return your data sorted by length
+# collate_utter return your data sorted by length
 def collate_utter(utter_list):
     inputs, targets = zip(*utter_list)
     lens = [len(utter) for utter in inputs]

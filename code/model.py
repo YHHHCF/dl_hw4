@@ -2,13 +2,18 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn
 import numpy as np
+from label_proc import *
 
 b_size = 256
+
 h_size = 128
 o_size = 128
+
 num_letter = 34
 embed_dim = 256
-tf_rate = 0.0
+tf_rate = 0.1
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 class LAS(nn.Module):
@@ -16,23 +21,24 @@ class LAS(nn.Module):
         super(LAS, self).__init__()
         global h_size
         global tf_rate
+        global DEVICE
 
         self.listener = Listener()
         self.speller = Speller()
 
         self.embedding = nn.Embedding(num_letter, embed_dim)
 
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        self.sh0 = init((b_size, o_size)).to(self.device)
-        self.sc0 = init((b_size, o_size)).to(self.device)
-        self.sh1 = init((b_size, o_size)).to(self.device)
-        self.sc1 = init((b_size, o_size)).to(self.device)
-        self.c0 = init((b_size, o_size)).to(self.device)
+        self.sh0 = init((b_size, o_size)).to(DEVICE)
+        self.sc0 = init((b_size, o_size)).to(DEVICE)
+        self.sh1 = init((b_size, o_size)).to(DEVICE)
+        self.sc1 = init((b_size, o_size)).to(DEVICE)
+        self.c0 = init((b_size, o_size)).to(DEVICE)
 
     def forward(self, utter_list, targets, mode):
         global tf_rate
-        b_size = len(utter_list)
+        global b_size
+        global DEVICE
+
         hk, hv, h_lens = self.listener(utter_list)
 
         if mode == 'train' or mode == 'val':
@@ -46,15 +52,17 @@ class LAS(nn.Module):
             emb_targets.append(t)
         packed_targets = rnn.pad_sequence(emb_targets)  # shape (max(l), b_size, emb-dim)
 
+        # a mask of shape(b_size, max(l)) to mask input attention
         in_mask = get_mask(h_lens)
-        in_mask = in_mask.to(self.device)
+        in_mask = in_mask.to(DEVICE)
+
         predictions = torch.zeros((b_size, len(packed_targets) - 1, num_letter))
-        predictions = predictions.to(self.device)
+        predictions = predictions.to(DEVICE)
 
         atten_list = []
 
-        # forward once for to train the hidden state
-        y_in = packed_targets[0]
+        # y_in is initialized the first embedded char for each batch
+        y_in = packed_targets[0]  # shape (b_size, emb_dim)
 
         sh = []
         sc = []
@@ -64,21 +72,26 @@ class LAS(nn.Module):
         sc.append(self.sc0)
         sc.append(self.sc1)
 
-        pred, c, sh, sc, _ = self.speller(hk, hv, y_in, self.c0, sh, sc, in_mask)
+        # forward at time -1 to train the hidden state
+        _, c, sh, sc, _ = self.speller(hk, hv, y_in, self.c0, sh, sc, in_mask)
 
-        
+        pred = None
         
         # make predictions
         for idx in range(len(packed_targets) - 1):  # -1 because we do not use } as input
-            if mode == 'val':
-                tf_rate = 1
-
             # whether use teacher forcing
-            tf_flag = (np.random.binomial(1, tf_rate, 1)[0] == 1)
+            # do not do teacher forcing at time 0
+            if idx == 0:
+                tf_flag = False
+            else:
+                if mode == 'train':
+                    tf_flag = (np.random.binomial(1, tf_rate, 1)[0] == 1)
+                else:
+                    tf_flag = True  # without teacher in val/test
 
             if tf_flag:
                 y_in = torch.argmax(pred, dim=1)
-                y_in = self.embedding(y_in)
+                y_in = self.embedding(y_in)  # shape is (b_size, emb_dim)
             else:
                 y_in = packed_targets[idx]  # shape is (b_size, emb_dim)
 
@@ -90,9 +103,12 @@ class LAS(nn.Module):
             atten_list.append(atten_vec)
 
         if mode == 'train' or mode == 'val':
+            # transform attention list into torch tensor to be shown
             attention_heat_maps = torch.zeros((len(atten_list), len(atten_list[0])))
             for idx in range(len(atten_list)):
                 attention_heat_maps[idx] = atten_list[idx]
+
+            # y_targets are [1:] of each target
             return predictions, y_targets, attention_heat_maps
         else:
             return predictions
@@ -125,7 +141,7 @@ class Listener(nn.Module):
 
         # packed_output[0] has shape (sum(l), hidden_size or *2), dtype=float
         # packed_output[1] has shape (max(l)), dtype=int
-        packed_output, hidden = self.rnn(packed_input, None)
+        packed_output, _ = self.rnn(packed_input, None)
 
         # shape (max(l), batch_size, hidden_size or *2), dtype=float
         # padded_output[:,i,:] (shape is (max(l), hidden_size or *2)) corresponds to the i'th input
@@ -134,7 +150,7 @@ class Listener(nn.Module):
 
         # go through pBLSTM
         padded_output = trans(padded_output, True)
-        padded_output = self.conv1(padded_output)
+        padded_output = self.conv1(padded_output)  # ?? correct?
         # padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn1(padded_output)
@@ -165,15 +181,16 @@ class Speller(nn.Module):
     def __init__(self):
         super(Speller, self).__init__()
         global o_size
+
         self.rnnCell0 = nn.LSTMCell((o_size + embed_dim), o_size)
         self.rnnCell1 = nn.LSTMCell(o_size, o_size)
 
         self.sm = nn.Softmax(dim=1)
 
-        self.linear1 = nn.Linear(o_size, h_size)
-        self.linear2 = nn.Linear(o_size, h_size)
+        self.linear1 = nn.Linear(o_size, o_size)
+        self.linear2 = nn.Linear(o_size, o_size)
         self.activate = nn.ReLU()
-        self.linear3 = nn.Linear(h_size, num_letter)
+        self.linear3 = nn.Linear(o_size, num_letter)
 
         self.bn = nn.BatchNorm1d(h_size)
 
@@ -204,10 +221,11 @@ class Speller(nn.Module):
         temp = temp * mask
         temp /= torch.sum(temp, dim=1).reshape(-1, 1)
 
-        atten_vec = temp[0]  # for debug
+        atten_vec = temp[0]  # take the attention vec of sample 0 in the batch for debug
 
         attention = temp.reshape(temp.size(0), 1, temp.size(1))
 
+        # get the context
         c = torch.bmm(attention, hv)
         c = c.reshape((c.size(0), c.size(2)))
 
@@ -232,7 +250,6 @@ def trans(data, flag):
 
 def init(shape):
     tensor = torch.zeros(shape)
-    nn.init.uniform_(tensor, -0.1, 0.1)
     tensor = nn.Parameter(tensor)
     return tensor
 
@@ -252,7 +269,7 @@ def init_weights(m):
 
 def get_mask(h_lens):
     global o_size
-    b_size = len(h_lens)
+    global b_size
     mask = torch.zeros((b_size, h_lens[0]))
     for i in range(b_size):
         mask[i][:h_lens[i]] = 1
