@@ -23,6 +23,7 @@ class LAS(nn.Module):
     def __init__(self):
         super(LAS, self).__init__()
         global h_size
+        global b_size
         global tf_rate
         global beam_width
         global DEVICE
@@ -84,7 +85,7 @@ class LAS(nn.Module):
         pred = None
         
         # train/val mode
-        if mode = 'train' or mode = 'val'
+        if mode == 'train' or mode == 'val':
             # make predictions when we have train/val mode
             for idx in range(len(packed_targets) - 1):  # -1 because we do not use } as input
                 # whether use teacher forcing
@@ -126,15 +127,14 @@ class LAS(nn.Module):
             searcher = PQ()
             pooler = PQ()
 
-            start = 32
             end_symb = 33
 
             states = (c, sh, sc)
 
-            first_node = (-1, append_char(None, char), states)
+            first_node = (-1, append_char(None, 32), states)
             searcher.put(first_node)
 
-            y_in = self.embedding(start)
+            y_in = packed_targets[0] # shape (b_size, emb_dim)
 
             while pooler.qsize() < beam_width:
                 new_searcher = PQ()
@@ -165,6 +165,13 @@ class LAS(nn.Module):
 
                 searcher = new_searcher
 
+            best_node = pooler.get()
+            best_prob = best_node[0]
+            best_path = best_node[1]
+            print("best node has prob:", best_prob)
+
+            return best_path
+
 
 
 # the listener
@@ -184,7 +191,7 @@ class Listener(nn.Module):
         self.kLinear = nn.Linear(2*h_size, o_size)
         self.vLinear = nn.Linear(2*h_size, o_size)
 
-        self.bn = nn.BatchNorm1d(h_size)
+        self.bn = nn.BatchNorm1d(2*h_size)
 
     def forward(self, utter_list):  # list
         # concat input on dim=0
@@ -204,19 +211,19 @@ class Listener(nn.Module):
         # go through pBLSTM
         padded_output = trans(padded_output, True)
         padded_output = self.conv1(padded_output)
-        padded_output = self.bn(padded_output)
+        # padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn1(padded_output)
 
         padded_output = trans(padded_output, True)
         padded_output = self.conv2(padded_output)
-        padded_output = self.bn(padded_output)
+        # padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn2(padded_output)
 
         padded_output = trans(padded_output, True)
         padded_output = self.conv3(padded_output)
-        padded_output = self.bn(padded_output)
+        # padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn3(padded_output)
 
@@ -324,6 +331,9 @@ def get_mask(h_lens):
     global o_size
     global b_size
     mask = torch.zeros((b_size, h_lens[0]))
+
+    print("debug:", mask.shape, h_lens.shape)
+
     for i in range(b_size):
         mask[i][:h_lens[i]] = 1
 
