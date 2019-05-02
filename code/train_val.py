@@ -60,10 +60,10 @@ def train(epochs, train_loader, val_loader, model, optim, writer):
         val_dis = val(model, val_loader, writer, e)
         model.train()
 
-        tf_rate += 0.01
+        tf_rate += 0.02
 
         if val_dis < best_dis:
-            save_ckpt(model, optim, val_dis)
+            save_ckpt(model, optim, val_dis, e)
             print("A model is saved!")
             best_dis = val_dis
     return
@@ -80,7 +80,7 @@ def val(model, val_loader, writer, ep):
     
     with torch.no_grad():
         for inputs, targets in val_loader:
-            predictions, y_targets, _ = model(inputs, targets, 'train')
+            predictions, y_targets, _ = model(inputs, targets, 'val')
 
             # calculate loss and distance and backprop
             loss = 0.
@@ -93,6 +93,11 @@ def val(model, val_loader, writer, ep):
                 pred_str = toSentence(torch.argmax(pred, dim=1))
                 target_str = toSentence(target)
                 dis += distance(pred_str, target_str)
+
+                # if i % 100 == 0:
+                #     print("pred:", pred_str)
+                #     print("target:", target_str)
+                #     print("len:", len(pred_str), len(target_str))
 
             total_loss += (loss / b_size)
             total_distance += (dis / b_size)
@@ -107,8 +112,8 @@ def val(model, val_loader, writer, ep):
     return total_distance
 
 
-def save_ckpt(model, optim, val_dis):
-    path = './../result/model_exp3.t7'
+def save_ckpt(model, optim, val_dis, e):
+    path = './../result/model_exp5_' + str(e) + '.t7'
 
     torch.save({
         'val_dis': val_dis,
@@ -128,7 +133,7 @@ def load_ckpt(path, mode='train'):
         global lr
         global best_dis
 
-        new_optimizer = torch.optim.Adam(new_model.parameters(), lr=lr)
+        new_optimizer = torch.optim.Adam(new_model.parameters(), lr=lr, weight_decay=5e-4)
         new_optimizer.load_state_dict(pretrained_ckpt['optimizer_state_dict'])
 
         for state in new_optimizer.state.values():

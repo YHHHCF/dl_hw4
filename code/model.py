@@ -11,7 +11,7 @@ o_size = 128
 
 num_letter = 34
 embed_dim = 256
-tf_rate = 0.0
+tf_rate = 0.1
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
