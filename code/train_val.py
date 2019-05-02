@@ -113,7 +113,7 @@ def val(model, val_loader, writer, ep):
 
 
 def save_ckpt(model, optim, val_dis, e):
-    path = './../result/model_exp5_' + str(e) + '.t7'
+    path = './../result/model_exp6_' + str(e) + '.t7'
 
     torch.save({
         'val_dis': val_dis,

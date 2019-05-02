@@ -41,7 +41,7 @@ def test(model, test_loader):
                 print(node)
 
 
-                pred = model(inputs, char, 'prediction')
+                pred = model(inputs, char, 'test')
                 pred = pred.reshape(pred.shape[2])
                 char = []
                 pred = torch.argmax(pred)

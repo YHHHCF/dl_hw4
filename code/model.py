@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.utils.rnn as rnn
 import numpy as np
 from label_proc import *
+from queue import PriorityQueue as PQ
 
 b_size = 256
 
@@ -13,6 +14,8 @@ num_letter = 34
 embed_dim = 256
 tf_rate = 0.1
 
+beam_width = 32
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -21,6 +24,7 @@ class LAS(nn.Module):
         super(LAS, self).__init__()
         global h_size
         global tf_rate
+        global beam_width
         global DEVICE
 
         self.listener = Listener()
@@ -34,6 +38,8 @@ class LAS(nn.Module):
         self.sc1 = init((b_size, o_size)).to(DEVICE)
         self.c0 = init((b_size, o_size)).to(DEVICE)
 
+    # mode = train/val/test
+    # when training, use tf; when val/test, use beam search
     def forward(self, utter_list, targets, mode):
         global tf_rate
         global b_size
@@ -77,41 +83,88 @@ class LAS(nn.Module):
 
         pred = None
         
-        # make predictions
-        for idx in range(len(packed_targets) - 1):  # -1 because we do not use } as input
-            # whether use teacher forcing
-            # do not do teacher forcing at time 0
-            if idx == 0:
-                tf_flag = False
-            else:
-                if mode == 'train':
-                    tf_flag = (np.random.binomial(1, tf_rate, 1)[0] == 1)
+        # train/val mode
+        if mode = 'train' or mode = 'val'
+            # make predictions when we have train/val mode
+            for idx in range(len(packed_targets) - 1):  # -1 because we do not use } as input
+                # whether use teacher forcing
+                # do not do teacher forcing at time 0
+                if idx == 0:
+                    tf_flag = False
                 else:
-                    tf_flag = True  # without teacher in val/test
+                    if mode == 'train':
+                        tf_flag = (np.random.binomial(1, tf_rate, 1)[0] == 1)
+                    else:
+                        tf_flag = True  # use beam search in val/test
 
-            if tf_flag:
-                y_in = torch.argmax(pred, dim=1)
-                y_in = self.embedding(y_in)  # shape is (b_size, emb_dim)
+                if tf_flag:
+                    y_in = torch.argmax(pred, dim=1)
+                    y_in = self.embedding(y_in)  # shape is (b_size, emb_dim)
+                else:
+                    y_in = packed_targets[idx]  # shape is (b_size, emb_dim)
+
+                # take in target, c, sh, sc for this step and return pred, c, sh, sc for next step
+                # pred should be compared with the target at next timestamp
+                pred, c, sh, sc, atten_vec = self.speller(hk, hv, y_in, c, sh, sc, in_mask)
+                predictions[:, idx, :] = pred
+
+                atten_list.append(atten_vec)
+
+            if mode == 'train' or mode == 'val':
+                # transform attention list into torch tensor to be shown
+                attention_heat_maps = torch.zeros((len(atten_list), len(atten_list[0])))
+                for idx in range(len(atten_list)):
+                    attention_heat_maps[idx] = atten_list[idx]
+
+                # y_targets are [1:] of each target
+                return predictions, y_targets, attention_heat_maps
             else:
-                y_in = packed_targets[idx]  # shape is (b_size, emb_dim)
+                return predictions
 
-            # take in target, c, sh, sc for this step and return pred, c, sh, sc for next step
-            # pred should be compared with the target at next timestamp
-            pred, c, sh, sc, atten_vec = self.speller(hk, hv, y_in, c, sh, sc, in_mask)
-            predictions[:, idx, :] = pred
-
-            atten_list.append(atten_vec)
-
-        if mode == 'train' or mode == 'val':
-            # transform attention list into torch tensor to be shown
-            attention_heat_maps = torch.zeros((len(atten_list), len(atten_list[0])))
-            for idx in range(len(atten_list)):
-                attention_heat_maps[idx] = atten_list[idx]
-
-            # y_targets are [1:] of each target
-            return predictions, y_targets, attention_heat_maps
+        # test mode, perform beam search
         else:
-            return predictions
+            searcher = PQ()
+            pooler = PQ()
+
+            start = 32
+            end_symb = 33
+
+            states = (c, sh, sc)
+
+            first_node = (-1, append_char(None, char), states)
+            searcher.put(first_node)
+
+            y_in = self.embedding(start)
+
+            while pooler.qsize() < beam_width:
+                new_searcher = PQ()
+                temp_list = PQ()
+                while searcher.qsize() > 0:
+                    parent = searcher.get()
+                    parent_prob = parent[0]
+                    parent_path = parent[1]
+                    parent_c, parent_sh, parent_sc = parent[2]
+
+                    child_probs, child_c, child_sh, child_sc, _ = self.speller(hk, hv, 
+                        y_in, parent_c, parent_sh, parent_sc, in_mask)
+
+                    for idx in range(num_letter):
+                        child_prob = child_probs[idx] * parent_prob
+                        child_path = append_char(parent_path, idx)
+                        child_state = (child_c, child_sh, child_sc)
+                        child = (child_prob, child_path, child_state)
+
+                        if idx == end_symb:
+                            pooler.put(child)
+                        else:
+                            temp_list.put(child)
+
+                while new_searcher.qsize() < beam_width:
+                    good_child = temp_list.get()
+                    new_searcher.put(good_child)
+
+                searcher = new_searcher
+
 
 
 # the listener
@@ -131,7 +184,7 @@ class Listener(nn.Module):
         self.kLinear = nn.Linear(2*h_size, o_size)
         self.vLinear = nn.Linear(2*h_size, o_size)
 
-        self.bn = nn.BatchNorm1d(2*h_size)
+        self.bn = nn.BatchNorm1d(h_size)
 
     def forward(self, utter_list):  # list
         # concat input on dim=0
@@ -150,20 +203,20 @@ class Listener(nn.Module):
 
         # go through pBLSTM
         padded_output = trans(padded_output, True)
-        padded_output = self.conv1(padded_output)  # ?? correct?
-        # padded_output = self.bn(padded_output)
+        padded_output = self.conv1(padded_output)
+        padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn1(padded_output)
 
         padded_output = trans(padded_output, True)
         padded_output = self.conv2(padded_output)
-        # padded_output = self.bn(padded_output)
+        padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn2(padded_output)
 
         padded_output = trans(padded_output, True)
         padded_output = self.conv3(padded_output)
-        # padded_output = self.bn(padded_output)
+        padded_output = self.bn(padded_output)
         padded_output = trans(padded_output, False)
         padded_output, _ = self.rnn3(padded_output)
 
@@ -275,6 +328,15 @@ def get_mask(h_lens):
         mask[i][:h_lens[i]] = 1
 
     return mask
+
+
+# append the input char to the list
+def append_char(char_list, char):
+    if not char_list is None:
+        char_list = np.append(char_list, char)
+    else:
+        char_list = [char]
+    return char_list
 
 
 if __name__ == '__main__':
