@@ -113,7 +113,7 @@ def val(model, val_loader, writer, ep):
 
 
 def save_ckpt(model, optim, val_dis, e):
-    path = './../result/model_exp6_' + str(e) + '.t7'
+    path = './../result/model_exp7_' + str(e) + '.t7'
 
     torch.save({
         'val_dis': val_dis,
@@ -157,8 +157,8 @@ if __name__ == '__main__':
     best_dis = 100
     lr = 1e-3
 
-    if_pretrain = False
-    path = './../result/model_exp3.t7'
+    if_pretrain = True
+    path = './../result/model_exp7_9.t7'
 
     train_loader = get_loader('train', b_size)
     val_loader = get_loader('val', b_size)
@@ -173,6 +173,8 @@ if __name__ == '__main__':
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     model = model.to(DEVICE)
+
+    print(model)
 
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.to(DEVICE)

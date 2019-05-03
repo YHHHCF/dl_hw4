@@ -49,7 +49,11 @@ def get_loader(mode, batch_size):
         data_path = val_data_path
         label_path = val_label_path
         sf = False
-    else:
+    elif mode == 'test_val':  # use the val dataset to perform beam search
+        data_path = val_data_path
+        label_path = val_label_path
+        sf = False
+    else:  # use the test dataset to perform beam search
         data_path = test_data_path
         label_path = val_label_path
         sf = False

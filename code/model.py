@@ -16,6 +16,8 @@ tf_rate = 0.1
 
 beam_width = 32
 
+beam_alpha = 0.7
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -32,12 +34,6 @@ class LAS(nn.Module):
         self.speller = Speller()
 
         self.embedding = nn.Embedding(num_letter, embed_dim)
-
-        self.sh0 = init((b_size, o_size)).to(DEVICE)
-        self.sc0 = init((b_size, o_size)).to(DEVICE)
-        self.sh1 = init((b_size, o_size)).to(DEVICE)
-        self.sc1 = init((b_size, o_size)).to(DEVICE)
-        self.c0 = init((b_size, o_size)).to(DEVICE)
 
     # mode = train/val/test
     # when training, use tf; when val/test, use beam search
@@ -60,7 +56,7 @@ class LAS(nn.Module):
         packed_targets = rnn.pad_sequence(emb_targets)  # shape (max(l), b_size, emb-dim)
 
         # a mask of shape(b_size, max(l)) to mask input attention
-        in_mask = get_mask(h_lens)
+        in_mask = get_mask(h_lens, mode=mode)
         in_mask = in_mask.to(DEVICE)
 
         predictions = torch.zeros((b_size, len(packed_targets) - 1, num_letter))
@@ -74,13 +70,27 @@ class LAS(nn.Module):
         sh = []
         sc = []
 
-        sh.append(self.sh0)
-        sh.append(self.sh1)
-        sc.append(self.sc0)
-        sc.append(self.sc1)
+        # init states
+        if mode == 'test':
+            sh0 = init((1, o_size)).to(DEVICE)
+            sh1 = init((1, o_size)).to(DEVICE)
+            sc0 = init((1, o_size)).to(DEVICE)
+            sc1 = init((1, o_size)).to(DEVICE)
+            c0 = init((1, o_size)).to(DEVICE)
+        else:
+            sh0 = init((b_size, o_size)).to(DEVICE)
+            sh1 = init((b_size, o_size)).to(DEVICE)
+            sc0 = init((b_size, o_size)).to(DEVICE)
+            sc1 = init((b_size, o_size)).to(DEVICE)
+            c0 = init((b_size, o_size)).to(DEVICE)
+
+        sh.append(sh0)
+        sh.append(sh1)
+        sc.append(sc0)
+        sc.append(sc1)
 
         # forward at time -1 to train the hidden state
-        _, c, sh, sc, _ = self.speller(hk, hv, y_in, self.c0, sh, sc, in_mask)
+        _, c, sh, sc, _ = self.speller(hk, hv, y_in, c0, sh, sc, in_mask)
 
         pred = None
         
@@ -127,11 +137,19 @@ class LAS(nn.Module):
             searcher = PQ()
             pooler = PQ()
 
+            sm = nn.Softmax(dim=0)
+
             end_symb = 33
+
+            max_len = hk.shape[1] * 4
+            pred_len = 0
+            person_id = 0
 
             states = (c, sh, sc)
 
-            first_node = (-1, append_char(None, 32), states)
+            first_node = (0, person_id, append_char(None, 32), states)
+            person_id += 1
+
             searcher.put(first_node)
 
             y_in = packed_targets[0] # shape (b_size, emb_dim)
@@ -139,36 +157,61 @@ class LAS(nn.Module):
             while pooler.qsize() < beam_width:
                 new_searcher = PQ()
                 temp_list = PQ()
+
+                pred_len += 1
+
+                if pred_len > max_len:
+                    break
+
                 while searcher.qsize() > 0:
+
                     parent = searcher.get()
-                    parent_prob = parent[0]
-                    parent_path = parent[1]
-                    parent_c, parent_sh, parent_sc = parent[2]
+                    parent_prob = parent[0]  # negative log probability
+                    parent_path = parent[2]
+                    parent_c, parent_sh, parent_sc = parent[3]
+
+                    y_in = torch.zeros((1,), dtype=torch.long).to(DEVICE)
+                    y_in[0] = torch.tensor(parent[2][-1])
+                    y_in = self.embedding(y_in)
+
+                    # print("parent path", parent_path)
 
                     child_probs, child_c, child_sh, child_sc, _ = self.speller(hk, hv, 
                         y_in, parent_c, parent_sh, parent_sc, in_mask)
 
-                    for idx in range(num_letter):
-                        child_prob = child_probs[idx] * parent_prob
-                        child_path = append_char(parent_path, idx)
-                        child_state = (child_c, child_sh, child_sc)
-                        child = (child_prob, child_path, child_state)
+                    child_probs = sm(child_probs[0])
 
-                        if idx == end_symb:
-                            pooler.put(child)
-                        else:
+                    for idx in range(num_letter):
+                        if child_probs[idx] > 0.03:
+                            child_prob = (parent_prob * (len(parent_path) ** beam_alpha) - torch.log(child_probs[idx])) / ((len(parent_path) + 1) ** beam_alpha)
+                            child_path = append_char(parent_path, idx)
+                            child_state = (child_c, child_sh, child_sc)
+                            child = (child_prob, person_id, child_path, child_state)
+                            person_id += 1
+
+                            # print("put into temp list:", child_prob)
                             temp_list.put(child)
 
-                while new_searcher.qsize() < beam_width:
+                while new_searcher.qsize() < beam_width and temp_list.qsize() > 0:
+                    # print("new_searcher size is {}, temp size is {}".format(new_searcher.qsize(), temp_list.qsize()))
                     good_child = temp_list.get()
-                    new_searcher.put(good_child)
+                    if good_child[2][-1] == end_symb:
+                        # print("put into pooler")
+                        pooler.put(good_child)
+                    else:
+                        new_searcher.put(good_child)
 
                 searcher = new_searcher
 
-            best_node = pooler.get()
-            best_prob = best_node[0]
-            best_path = best_node[1]
-            print("best node has prob:", best_prob)
+                # print("finish loop debug", pooler.qsize())
+
+            # print("out loop, pooler has size:", pooler.qsize())
+            if pooler.qsize() == 0:
+                best_path = [32, 33]
+            else:
+                best_node = pooler.get()
+                best_prob = best_node[0]
+                best_path = best_node[2]
 
             return best_path
 
@@ -310,7 +353,6 @@ def trans(data, flag):
 
 def init(shape):
     tensor = torch.zeros(shape)
-    tensor = nn.Parameter(tensor)
     return tensor
 
 
@@ -327,16 +369,18 @@ def init_weights(m):
                 nn.init.uniform_(param, -0.1, 0.1)
 
 
-def get_mask(h_lens):
+def get_mask(h_lens, mode):
     global o_size
     global b_size
-    mask = torch.zeros((b_size, h_lens[0]))
 
-    print("debug:", mask.shape, h_lens.shape)
-
-    for i in range(b_size):
-        mask[i][:h_lens[i]] = 1
-
+    if mode == 'test':
+        mask = torch.zeros((1, h_lens[0]))
+        mask[0][:h_lens[0]] = 1
+    else:
+        mask = torch.zeros((b_size, h_lens[0]))
+        for i in range(b_size):
+            mask[i][:h_lens[i]] = 1
+    
     return mask
 
 
