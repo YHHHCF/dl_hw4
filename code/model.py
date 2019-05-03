@@ -131,7 +131,7 @@ class LAS(nn.Module):
             searcher = PQ()
             pooler = PQ()
 
-            sm = nn.Softmax(dim=0)
+            sm = nn.Softmax(dim=1)
 
             end_symb = 33
 
@@ -157,22 +157,110 @@ class LAS(nn.Module):
                 # if pred_len > max_len:
                 #     break
 
-                while searcher.qsize() > 0:
+                # while searcher.qsize() > 0:
 
+                #     parent = searcher.get()
+                #     parent_prob = parent[0]  # negative log probability
+                #     parent_path = parent[2]
+                #     parent_c, parent_sh, parent_sc = parent[3]
+
+                #     y_in = torch.zeros((1,), dtype=torch.long).to(DEVICE)
+                #     y_in[0] = torch.tensor(parent_path[-1])
+                #     y_in = self.embedding(y_in)
+
+                    # child_probs, child_c, child_sh, child_sc, _ = self.speller(hk, hv, 
+                    #     y_in, parent_c, parent_sh, parent_sc, in_mask)
+
+                #     child_probs = sm(child_probs[0])
+
+                #     for idx in range(num_letter):
+                #         if child_probs[idx] > 0.001:
+                #             child_prob = (parent_prob * (len(parent_path) ** beam_alpha) - 
+                #                 torch.log(child_probs[idx])) / ((len(parent_path) + 1) ** beam_alpha)
+                #             child_path = append_char(parent_path, idx)
+                #             child_state = (child_c, child_sh, child_sc)
+                #             child = (child_prob, person_id, child_path, child_state)
+                #             person_id += 1
+
+                #             temp_list.put(child)
+
+                # get parents for this level
+                parent_probs = []
+                parent_paths = []
+                parent_cs = []
+                parent_shs = []
+                parent_scs = []
+                y_ins = []
+
+                while searcher.qsize() > 0:
                     parent = searcher.get()
                     parent_prob = parent[0]  # negative log probability
                     parent_path = parent[2]
                     parent_c, parent_sh, parent_sc = parent[3]
 
                     y_in = torch.zeros((1,), dtype=torch.long).to(DEVICE)
-                    y_in[0] = torch.tensor(parent[2][-1])
+                    y_in[0] = torch.tensor(parent_path[-1])
                     y_in = self.embedding(y_in)
 
-                    child_probs, child_c, child_sh, child_sc, _ = self.speller(hk, hv, 
-                        y_in, parent_c, parent_sh, parent_sc, in_mask)
+                    # pack them into a batch
+                    parent_probs.append(parent_prob)
+                    parent_paths.append(parent_path)
+                    parent_cs.append(parent_c)
+                    parent_shs.append(parent_sh)
+                    parent_scs.append(parent_sc)
+                    y_ins.append(y_in)
 
-                    child_probs = sm(child_probs[0])
+                print("debug", y_in.shape, parent_c.shape, parent_sh[0].shape, parent_sc[0].shape)
 
+                # process the batches into tensors
+                beam_bsize = len(y_ins)
+
+                print("beam_bsize:", beam_bsize)
+
+                y_in_batch = torch.zeros((beam_bsize, embed_dim)).to(DEVICE)
+                parent_c_batch = torch.zeros((beam_bsize, o_size)).to(DEVICE)
+                parent_sh0_batch = torch.zeros((beam_bsize, o_size)).to(DEVICE)
+                parent_sh1_batch = torch.zeros((beam_bsize, o_size)).to(DEVICE)
+                parent_sc0_batch = torch.zeros((beam_bsize, o_size)).to(DEVICE)
+                parent_sc1_batch = torch.zeros((beam_bsize, o_size)).to(DEVICE)
+
+                for i in range(beam_bsize):
+                    print("debug 3:", parent_sh1_batch.shape, parent_shs[i][0].shape)
+                    y_in_batch[i] = y_ins[i]
+                    parent_c_batch[i] = parent_cs[i]
+                    parent_sh0_batch[i] = parent_shs[i][0]
+                    parent_sh1_batch[i] = parent_shs[i][1]
+                    parent_sc0_batch[i] = parent_scs[i][0]
+                    parent_sc1_batch[i] = parent_scs[i][1]
+
+                parent_sh_batch = (parent_sh0_batch, parent_sh1_batch)
+                parent_sc_batch = (parent_sc0_batch, parent_sc1_batch)
+
+
+                child_probs_batch, child_c_batch, child_sh_batch, child_sc_batch, _ = self.speller(hk, hv, y_in_batch,
+                    parent_c_batch, parent_sh_batch, parent_sc_batch, in_mask)
+
+                print("debug 1", y_in_batch.shape, parent_c_batch.shape, parent_sh_batch[0].shape, parent_sc_batch[0].shape)
+
+                print("debug 2", child_probs_batch.shape, child_c_batch.shape, child_sh_batch[0].shape)
+
+                child_probs_batch = sm(child_probs_batch)
+
+                # generate all children
+                for b in range(beam_bsize):
+                    # get the parent states
+                    parent_prob = parent_probs[b]  # negative log probability
+                    parent_path = parent_paths[b]
+                    parent_c = parent_c_batch[b]
+                    parent_sh = parent_sh_batch[b]
+                    parent_sc = parent_sc_batch[b]
+
+                    child_probs = child_probs_batch[b]
+                    child_c = child_c_batch[b]
+                    child_sh = child_sh_batch[b]
+                    child_sc = child_sc_batch[b]
+
+                    # generate all children for that parent
                     for idx in range(num_letter):
                         if child_probs[idx] > 0.001:
                             child_prob = (parent_prob * (len(parent_path) ** beam_alpha) - 
@@ -183,8 +271,6 @@ class LAS(nn.Module):
                             person_id += 1
 
                             temp_list.put(child)
-
-
 
                 while new_searcher.qsize() < beam_width and temp_list.qsize() > 0:
                     good_child = temp_list.get()
