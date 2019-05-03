@@ -14,7 +14,7 @@ num_letter = 34
 embed_dim = 256
 tf_rate = 0.1
 
-beam_width = 4
+beam_width = 2
 
 beam_alpha = 0.7
 
@@ -156,6 +156,8 @@ class LAS(nn.Module):
 
                 if pred_len > max_len and pooler.qsize() == 0:
                     break
+                if pred_len > max_len  + 100:
+                    break
 
                 while searcher.qsize() > 0:
 
@@ -168,47 +170,50 @@ class LAS(nn.Module):
                     y_in[0] = torch.tensor(parent[2][-1])
                     y_in = self.embedding(y_in)
 
-                    # print("parent path", parent_path)
-
                     child_probs, child_c, child_sh, child_sc, _ = self.speller(hk, hv, 
                         y_in, parent_c, parent_sh, parent_sc, in_mask)
 
                     child_probs = sm(child_probs[0])
 
                     for idx in range(num_letter):
-                        if child_probs[idx] > 0.03:
+                        if child_probs[idx] > 0.001:
                             child_prob = (parent_prob * (len(parent_path) ** beam_alpha) - torch.log(child_probs[idx])) / ((len(parent_path) + 1) ** beam_alpha)
                             child_path = append_char(parent_path, idx)
                             child_state = (child_c, child_sh, child_sc)
                             child = (child_prob, person_id, child_path, child_state)
                             person_id += 1
 
-                            # print("put into temp list:", child_prob)
                             temp_list.put(child)
 
                 while new_searcher.qsize() < beam_width and temp_list.qsize() > 0:
-                    # print("new_searcher size is {}, temp size is {}".format(new_searcher.qsize(), temp_list.qsize()))
                     good_child = temp_list.get()
                     if good_child[2][-1] == end_symb:
-                        # print("put into pooler")
                         pooler.put(good_child)
                     else:
                         new_searcher.put(good_child)
 
                 searcher = new_searcher
 
-                # print("finish loop debug", pooler.qsize())
-
-            # print("out loop, pooler has size:", pooler.qsize())
             if pooler.qsize() == 0:
-                best_path = [32, 33]
+                best_path = append_char(None, 32)
+                y_in = packed_targets[0]
+                for idx in range(int(packed_targets.shape[0])):
+                # for idx in range(200):
+                    pred, c, sh, sc, atten_vec = self.speller(hk, hv, y_in, c, sh, sc, in_mask)
+                    pred = sm(pred[0])
+                    pred = torch.argmax(pred).cpu().numpy()
+                    best_path = append_char(best_path, pred)
+
+                    y_in = torch.zeros((1,), dtype=torch.long).to(DEVICE)
+                    y_in[0] = torch.tensor(pred)
+                    y_in = self.embedding(y_in)
+
             else:
                 best_node = pooler.get()
                 best_prob = best_node[0]
                 best_path = best_node[2]
 
             return best_path
-
 
 
 # the listener

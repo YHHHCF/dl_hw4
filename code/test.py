@@ -35,26 +35,33 @@ def test_val(model, val_loader, writer):
     
     with torch.no_grad():
         for inputs, targets in val_loader:
-            print("term:", cnt)
+            # print("term:", cnt)
+
+            # debug
+            # if not cnt == 40:
+            #     cnt += 1
+            #     continue
 
             label_str = toSentence(targets[0])
-            print("label:", label_str[1:-1])
+            # print("label:", label_str[1:-1])
                 
             prediction = model(inputs, targets, 'test')
             # print("test prediction:", prediction)
             pred_str = toSentence(prediction)
             
-            print("pred sentence:", pred_str[1:-1])
+            # print("pred sentence:", pred_str[1:-1])
             
             dis = distance(pred_str, label_str)
 
-            print("dis:", dis)
+            # print("dis:", dis)
 
             writer.add_scalar('test/distance', dis, cnt)
 
             total_dis += dis
 
-            cnt += 1     
+            cnt += 1
+            if cnt == 100:
+                break
             
     print("total_dis", total_dis / cnt)
     return None
@@ -98,17 +105,27 @@ def test(model, test_loader):
 
 if __name__ == '__main__':
 
-    # val_loader = get_loader('test_val', batch_size=1) # use the val dataset to perform beam search
-    test_loader = get_loader('test', batch_size=1) # use the test dataset to perform beam search
+    val_loader = get_loader('test_val', batch_size=1) # use the val dataset to perform beam search
+    # test_loader = get_loader('test', batch_size=1) # use the test dataset to perform beam search
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-    path = './../result/model_exp7_19.t7'
-    model, _ = load_ckpt(path, 'test')  
-    model = model.to(DEVICE)
+    # path = './../result/model_exp7_19.t7'
+    # model, _ = load_ckpt(path, 'test')  
+    # model = model.to(DEVICE)
 
-    writer = SummaryWriter()
+    # writer = SummaryWriter()
 
     # test_val(model, val_loader, writer)
-    test(model, test_loader)
+    # test(model, test_loader)
+
+    ckpts = [10, 13, 16, 17, 19]
+    for i in ckpts:
+        path = './../result/model_exp7_' + str(i) + '.t7'
+        print(path)
+        model, _ = load_ckpt(path, 'test')  
+        model = model.to(DEVICE)
+        writer = SummaryWriter()
+
+        test_val(model, val_loader, writer)        
 
