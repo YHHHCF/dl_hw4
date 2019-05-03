@@ -16,7 +16,7 @@ tf_rate = 0.1
 
 beam_width = 2
 
-beam_alpha = 0.7
+beam_alpha = 1.4
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -148,16 +148,14 @@ class LAS(nn.Module):
 
             y_in = packed_targets[0] # shape (b_size, emb_dim)
 
-            while pooler.qsize() < beam_width:
+            while pred_len <= max_len:
                 new_searcher = PQ()
                 temp_list = PQ()
 
                 pred_len += 1
 
-                if pred_len > max_len and pooler.qsize() == 0:
-                    break
-                if pred_len > max_len  + 100:
-                    break
+                # if pred_len > max_len:
+                #     break
 
                 while searcher.qsize() > 0:
 
@@ -177,13 +175,16 @@ class LAS(nn.Module):
 
                     for idx in range(num_letter):
                         if child_probs[idx] > 0.001:
-                            child_prob = (parent_prob * (len(parent_path) ** beam_alpha) - torch.log(child_probs[idx])) / ((len(parent_path) + 1) ** beam_alpha)
+                            child_prob = (parent_prob * (len(parent_path) ** beam_alpha) - 
+                                torch.log(child_probs[idx])) / ((len(parent_path) + 1) ** beam_alpha)
                             child_path = append_char(parent_path, idx)
                             child_state = (child_c, child_sh, child_sc)
                             child = (child_prob, person_id, child_path, child_state)
                             person_id += 1
 
                             temp_list.put(child)
+
+
 
                 while new_searcher.qsize() < beam_width and temp_list.qsize() > 0:
                     good_child = temp_list.get()
