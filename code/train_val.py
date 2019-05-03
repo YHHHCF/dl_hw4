@@ -65,7 +65,8 @@ def train(epochs, train_loader, val_loader, model, optim, writer):
             
         model.train()
 
-        tf_rate += 0.02
+        if tf_rate < 0.2:
+            tf_rate += 0.01
 
         
     return
@@ -150,7 +151,7 @@ def load_ckpt(path, mode='train'):
 
 
 if __name__ == '__main__':
-    epochs = 50
+    epochs = 40
     best_dis = 100
     lr = 1e-3
 

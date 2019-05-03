@@ -12,7 +12,7 @@ o_size = 128
 
 num_letter = 34
 embed_dim = 256
-tf_rate = 0.1
+tf_rate = 0.0
 
 beam_width = 4
 
@@ -300,8 +300,8 @@ class LAS(nn.Module):
             if pooler.qsize() == 0:
                 best_path = append_char(None, 32)
                 y_in = packed_targets[0]
-                for idx in range(int(packed_targets.shape[0])):
-                # for idx in range(200):
+
+                for idx in range(max_len):
                     pred, c, sh, sc, atten_vec = self.speller(hk, hv, y_in, c, sh, sc, in_mask)
                     pred = sm0(pred[0])
                     pred = torch.argmax(pred).cpu().numpy()
@@ -392,12 +392,12 @@ class Speller(nn.Module):
 
         self.sm = nn.Softmax(dim=1)
 
-        self.linear1 = nn.Linear(o_size, o_size)
-        self.linear2 = nn.Linear(o_size, o_size)
+        self.linear1 = nn.Linear(o_size, embed_dim)
+        self.linear2 = nn.Linear(o_size, embed_dim)
         self.activate = nn.ReLU()
-        self.linear3 = nn.Linear(o_size, num_letter)
+        self.linear3 = nn.Linear(embed_dim, num_letter)
 
-        self.bn = nn.BatchNorm1d(h_size)
+        self.bn = nn.BatchNorm1d(embed_dim)
 
     # _1 means params from time t-1
     # return values are all for time t
@@ -440,6 +440,7 @@ class Speller(nn.Module):
         out = self.bn(out)
         out = self.activate(out)
         out = self.linear3(out)
+
         return out, c, sh, sc, atten_vec
 
 
