@@ -44,13 +44,13 @@ def test_val(model, val_loader, writer):
             #     continue
 
             label_str = toSentence(targets[0])
-            # print("label:", label_str[1:-1])
+            print("label:", label_str[1:-1])
                 
             prediction = model(inputs, targets, 'test')
-            # print("test prediction:", prediction)
+
             pred_str = toSentence(prediction)
             
-            # print("pred sentence:", pred_str[1:-1])
+            print("pred sentence:", pred_str[1:-1])
             
             dis = distance(pred_str, label_str)
 
@@ -88,6 +88,7 @@ def test(model, test_loader):
             print("================")
             print("term:", idx)
             prediction = model(inputs, targets, 'test')
+
             pred_str = toSentence(prediction)
 
             pred_str = pred_str[1:-1]
@@ -110,21 +111,21 @@ if __name__ == '__main__':
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # path = './../result/model_exp7_19.t7'
-    # model, _ = load_ckpt(path, 'test')  
-    # model = model.to(DEVICE)
+    path = './../result/model_exp7_19.t7'
+    model, _ = load_ckpt(path, 'test')  
+    model = model.to(DEVICE)
 
     writer = SummaryWriter()
 
-    # test(model, test_loader)
+    test(model, test_loader)
 
-    ckpts = [19]
-    for i in ckpts:
-        path = './../result/model_exp7_' + str(i) + '.t7'
-        print(path)
-        model, _ = load_ckpt(path, 'test')  
-        model = model.to(DEVICE)
-        writer = SummaryWriter()
+    # ckpts = [19]
+    # for i in ckpts:
+    #     path = './../result/model_exp7_' + str(i) + '.t7'
+    #     print(path)
+    #     model, _ = load_ckpt(path, 'test')  
+    #     model = model.to(DEVICE)
+    #     writer = SummaryWriter()
 
-        test_val(model, val_loader, writer)        
+    #     test_val(model, val_loader, writer)        
 

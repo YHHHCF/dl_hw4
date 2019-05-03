@@ -14,9 +14,9 @@ num_letter = 34
 embed_dim = 256
 tf_rate = 0.1
 
-beam_width = 2
+beam_width = 4
 
-beam_alpha = 1.4
+beam_alpha = 0.7
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -131,7 +131,8 @@ class LAS(nn.Module):
             searcher = PQ()
             pooler = PQ()
 
-            sm = nn.Softmax(dim=1)
+            sm0 = nn.Softmax(dim=0)
+            sm1 = nn.Softmax(dim=1)
 
             end_symb = 33
 
@@ -210,12 +211,11 @@ class LAS(nn.Module):
                     parent_scs.append(parent_sc)
                     y_ins.append(y_in)
 
-                print("debug", y_in.shape, parent_c.shape, parent_sh[0].shape, parent_sc[0].shape)
-
                 # process the batches into tensors
                 beam_bsize = len(y_ins)
 
-                print("beam_bsize:", beam_bsize)
+                if beam_bsize == 0:
+                    break
 
                 y_in_batch = torch.zeros((beam_bsize, embed_dim)).to(DEVICE)
                 parent_c_batch = torch.zeros((beam_bsize, o_size)).to(DEVICE)
@@ -225,7 +225,6 @@ class LAS(nn.Module):
                 parent_sc1_batch = torch.zeros((beam_bsize, o_size)).to(DEVICE)
 
                 for i in range(beam_bsize):
-                    print("debug 3:", parent_sh1_batch.shape, parent_shs[i][0].shape)
                     y_in_batch[i] = y_ins[i]
                     parent_c_batch[i] = parent_cs[i]
                     parent_sh0_batch[i] = parent_shs[i][0]
@@ -236,15 +235,14 @@ class LAS(nn.Module):
                 parent_sh_batch = (parent_sh0_batch, parent_sh1_batch)
                 parent_sc_batch = (parent_sc0_batch, parent_sc1_batch)
 
+                hk_batch = hk.expand(beam_bsize, -1, -1)
+                hv_batch = hv.expand(beam_bsize, -1, -1)
+                in_mask_batch = in_mask.expand(beam_bsize, -1)
 
-                child_probs_batch, child_c_batch, child_sh_batch, child_sc_batch, _ = self.speller(hk, hv, y_in_batch,
-                    parent_c_batch, parent_sh_batch, parent_sc_batch, in_mask)
+                child_probs_batch, child_c_batch, child_sh_batch, child_sc_batch, _ = self.speller(hk_batch, hv_batch, y_in_batch,
+                    parent_c_batch, parent_sh_batch, parent_sc_batch, in_mask_batch)
 
-                print("debug 1", y_in_batch.shape, parent_c_batch.shape, parent_sh_batch[0].shape, parent_sc_batch[0].shape)
-
-                print("debug 2", child_probs_batch.shape, child_c_batch.shape, child_sh_batch[0].shape)
-
-                child_probs_batch = sm(child_probs_batch)
+                child_probs_batch = sm1(child_probs_batch)
 
                 # generate all children
                 for b in range(beam_bsize):
@@ -252,25 +250,43 @@ class LAS(nn.Module):
                     parent_prob = parent_probs[b]  # negative log probability
                     parent_path = parent_paths[b]
                     parent_c = parent_c_batch[b]
-                    parent_sh = parent_sh_batch[b]
-                    parent_sc = parent_sc_batch[b]
 
                     child_probs = child_probs_batch[b]
                     child_c = child_c_batch[b]
-                    child_sh = child_sh_batch[b]
-                    child_sc = child_sc_batch[b]
+                    sh0 = child_sh_batch[0][b].reshape(1, -1)
+                    sh1 = child_sh_batch[1][b].reshape(1, -1)
+                    sc0 = child_sc_batch[0][b].reshape(1, -1)
+                    sc1 = child_sc_batch[1][b].reshape(1, -1)
+                    child_sh = (sh0, sh1)
+                    child_sc = (sc0, sc1)
 
                     # generate all children for that parent
-                    for idx in range(num_letter):
-                        if child_probs[idx] > 0.001:
-                            child_prob = (parent_prob * (len(parent_path) ** beam_alpha) - 
-                                torch.log(child_probs[idx])) / ((len(parent_path) + 1) ** beam_alpha)
-                            child_path = append_char(parent_path, idx)
-                            child_state = (child_c, child_sh, child_sc)
-                            child = (child_prob, person_id, child_path, child_state)
-                            person_id += 1
+                    # # if the parent node ends, only take the child which predicts ends after that
+                    # if parent_path[-1] == end_symb:
+                    #     child_prob = (parent_prob * (len(parent_path) ** beam_alpha) - 
+                    #             torch.log(child_probs[end_symb])) / ((len(parent_path) + 1) ** beam_alpha)
+                    #     # child_prob = parent_prob - torch.log(child_probs[end_symb])
+                    #     child_path = append_char(parent_path, end_symb)
+                    #     child_state = (child_c, child_sh, child_sc)
+                    #     child = (child_prob, person_id, child_path, child_state)
+                    #     person_id += 1
 
-                            temp_list.put(child)
+                    #     temp_list.put(child)
+
+                    # if the parent predicts a valid char, process normally
+                    # else:
+                    for idx in range(num_letter):
+                        # if the parent predict start, skip it
+                        if idx == 32:
+                            continue
+                        child_prob = (parent_prob * (len(parent_path) ** beam_alpha) - 
+                            torch.log(child_probs[idx])) / ((len(parent_path) + 1) ** beam_alpha)
+                        child_path = append_char(parent_path, idx)
+                        child_state = (child_c, child_sh, child_sc)
+                        child = (child_prob, person_id, child_path, child_state)
+                        person_id += 1
+
+                        temp_list.put(child)
 
                 while new_searcher.qsize() < beam_width and temp_list.qsize() > 0:
                     good_child = temp_list.get()
@@ -287,7 +303,7 @@ class LAS(nn.Module):
                 for idx in range(int(packed_targets.shape[0])):
                 # for idx in range(200):
                     pred, c, sh, sc, atten_vec = self.speller(hk, hv, y_in, c, sh, sc, in_mask)
-                    pred = sm(pred[0])
+                    pred = sm0(pred[0])
                     pred = torch.argmax(pred).cpu().numpy()
                     best_path = append_char(best_path, pred)
 
