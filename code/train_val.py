@@ -56,16 +56,18 @@ def train(epochs, train_loader, val_loader, model, optim, writer):
                 writer.add_image('atten_heatmap' + str(idx), atten_heatmap, idx)
             idx += 1
 
-
-        val_dis = val(model, val_loader, writer, e)
+        if (e % 2) == 1:
+            val_dis = val(model, val_loader, writer, e)
+            if val_dis < best_dis:
+                save_ckpt(model, optim, val_dis, e)
+                print("A model is saved!")
+                best_dis = val_dis
+            
         model.train()
 
         tf_rate += 0.02
 
-        if val_dis < best_dis:
-            save_ckpt(model, optim, val_dis, e)
-            print("A model is saved!")
-            best_dis = val_dis
+        
     return
 
 
@@ -74,46 +76,41 @@ def val(model, val_loader, writer, ep):
     global b_size
     model.eval()
 
-    total_loss = 0.
     total_distance = 0.
     cnt = 0.
     
     with torch.no_grad():
+        idx = 0
         for inputs, targets in val_loader:
-            predictions, y_targets, _ = model(inputs, targets, 'val')
+            pred = model(inputs, targets, 'val')
 
             # calculate loss and distance and backprop
             loss = 0.
             dis = 0.
-            for i in range(len(y_targets)):
-                target = y_targets[i]
-                pred = predictions[i][:len(target)]
-                loss += torch.exp(criterion(pred, target))
 
-                pred_str = toSentence(torch.argmax(pred, dim=1))
-                target_str = toSentence(target)
-                dis += distance(pred_str, target_str)
+            target = targets[0]
 
-                # if i % 100 == 0:
-                #     print("pred:", pred_str)
-                #     print("target:", target_str)
-                #     print("len:", len(pred_str), len(target_str))
+            pred_str = toSentence(pred)
+            target_str = toSentence(target)
+            dis += distance(pred_str, target_str)
 
-            total_loss += (loss / b_size)
+            if idx % 100 == 0:
+                print("pred:", pred_str)
+                print("target:", target_str)
+                print("dis:", dis)
+
             total_distance += (dis / b_size)
             cnt += 1
 
-    total_loss /= cnt
     total_distance /= cnt
     
-    print("Val loss: {}, distance: {}".format(total_loss, total_distance))
-    writer.add_scalar('val/loss', total_loss, ep)
+    print("Val distance: {}".format(total_distance))
     writer.add_scalar('val/distance', total_distance, ep)
     return total_distance
 
 
 def save_ckpt(model, optim, val_dis, e):
-    path = './../result/model_exp7_' + str(e) + '.t7'
+    path = './../result/model_exp8_' + str(e) + '.t7'
 
     torch.save({
         'val_dis': val_dis,
@@ -153,15 +150,15 @@ def load_ckpt(path, mode='train'):
 
 
 if __name__ == '__main__':
-    epochs = 100
+    epochs = 50
     best_dis = 100
     lr = 1e-3
 
-    if_pretrain = True
-    path = './../result/model_exp7_9.t7'
+    if_pretrain = False
+    path = './../result/model_exp8_9.t7'
 
     train_loader = get_loader('train', b_size)
-    val_loader = get_loader('val', b_size)
+    val_loader = get_loader('val', 1)
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 

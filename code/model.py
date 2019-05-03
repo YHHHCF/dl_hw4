@@ -14,7 +14,7 @@ num_letter = 34
 embed_dim = 256
 tf_rate = 0.1
 
-beam_width = 32
+beam_width = 4
 
 beam_alpha = 0.7
 
@@ -71,7 +71,7 @@ class LAS(nn.Module):
         sc = []
 
         # init states
-        if mode == 'test':
+        if mode == 'test' or mode == 'val':
             sh0 = init((1, o_size)).to(DEVICE)
             sh1 = init((1, o_size)).to(DEVICE)
             sc0 = init((1, o_size)).to(DEVICE)
@@ -94,8 +94,8 @@ class LAS(nn.Module):
 
         pred = None
         
-        # train/val mode
-        if mode == 'train' or mode == 'val':
+        # train mode
+        if mode == 'train':
             # make predictions when we have train/val mode
             for idx in range(len(packed_targets) - 1):  # -1 because we do not use } as input
                 # whether use teacher forcing
@@ -103,10 +103,7 @@ class LAS(nn.Module):
                 if idx == 0:
                     tf_flag = False
                 else:
-                    if mode == 'train':
-                        tf_flag = (np.random.binomial(1, tf_rate, 1)[0] == 1)
-                    else:
-                        tf_flag = True  # use beam search in val/test
+                    tf_flag = (np.random.binomial(1, tf_rate, 1)[0] == 1)
 
                 if tf_flag:
                     y_in = torch.argmax(pred, dim=1)
@@ -121,18 +118,15 @@ class LAS(nn.Module):
 
                 atten_list.append(atten_vec)
 
-            if mode == 'train' or mode == 'val':
-                # transform attention list into torch tensor to be shown
-                attention_heat_maps = torch.zeros((len(atten_list), len(atten_list[0])))
-                for idx in range(len(atten_list)):
-                    attention_heat_maps[idx] = atten_list[idx]
+            # transform attention list into torch tensor to be shown
+            attention_heat_maps = torch.zeros((len(atten_list), len(atten_list[0])))
+            for idx in range(len(atten_list)):
+                attention_heat_maps[idx] = atten_list[idx]
 
-                # y_targets are [1:] of each target
-                return predictions, y_targets, attention_heat_maps
-            else:
-                return predictions
+            # y_targets are [1:] of each target
+            return predictions, y_targets, attention_heat_maps
 
-        # test mode, perform beam search
+        # val/test mode, perform beam search
         else:
             searcher = PQ()
             pooler = PQ()
@@ -141,7 +135,7 @@ class LAS(nn.Module):
 
             end_symb = 33
 
-            max_len = hk.shape[1] * 4
+            max_len = 150
             pred_len = 0
             person_id = 0
 
@@ -160,7 +154,7 @@ class LAS(nn.Module):
 
                 pred_len += 1
 
-                if pred_len > max_len:
+                if pred_len > max_len and pooler.qsize() == 0:
                     break
 
                 while searcher.qsize() > 0:
@@ -373,7 +367,7 @@ def get_mask(h_lens, mode):
     global o_size
     global b_size
 
-    if mode == 'test':
+    if mode == 'test' or mode == 'val':
         mask = torch.zeros((1, h_lens[0]))
         mask[0][:h_lens[0]] = 1
     else:

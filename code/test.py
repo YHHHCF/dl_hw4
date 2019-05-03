@@ -62,7 +62,7 @@ def test_val(model, val_loader, writer):
 def test(model, test_loader):
     global answer_path
 
-    badcase = [14, 41, 64, 72, 111, 212, 231, 234, 248, 268, 300, 301, 342, 363, 448, 479, 492, 496, 499]
+    badcase = [14, 72, 111, 212, 300, 448, 499]
 
     char = 32
     end_symb = 33
@@ -76,18 +76,18 @@ def test(model, test_loader):
     
     with torch.no_grad():
         for inputs, targets in test_loader:
-            # if idx in badcase:
-            print("term:", idx)
-            print("input shape:", inputs[0].shape)
-            prediction = model(inputs, targets, 'test')
-            print(prediction)
-            pred_str = toSentence(prediction)
+            if idx in badcase:
+                print("term:", idx)
+                print("input shape:", inputs[0].shape)
+                prediction = model(inputs, targets, 'test')
+                print(prediction)
+                pred_str = toSentence(prediction)
 
-            pred_str = pred_str[1:-1]
-            
-            print("pred sentence:", pred_str)
+                pred_str = pred_str[1:-1]
+                
+                print("pred sentence:", pred_str)
 
-            answer_dict[idx] = pred_str
+                answer_dict[idx] = pred_str
 
             idx += 1
 
