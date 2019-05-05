@@ -9,7 +9,7 @@ from Levenshtein import distance
 from tensorboardX import SummaryWriter
 
 
-def train(epochs, train_loader, val_loader, model, optim, writer):
+def train(epochs, train_loader, val_loader, model, optim, sche, writer):
     global b_size
     global tf_rate
     global best_dis
@@ -42,7 +42,7 @@ def train(epochs, train_loader, val_loader, model, optim, writer):
                 #     print("len:", len(pred_str), len(target_str))
 
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1)
+            nn.utils.clip_grad_norm_(model.parameters(), 1000)
             optim.step()
 
             print("Step {} loss: {}, distance: {}".format(idx, (loss / b_size), (dis / b_size)))
@@ -56,16 +56,19 @@ def train(epochs, train_loader, val_loader, model, optim, writer):
                 writer.add_image('atten_heatmap' + str(idx), atten_heatmap, idx)
             idx += 1
 
-        if (e % 2) == 1:
-            val_dis = val(model, val_loader, writer, e)
-            if val_dis < best_dis:
-                save_ckpt(model, optim, val_dis, e)
-                print("A model is saved!")
-                best_dis = val_dis
-            
+        # if (e % 2) == 1:
+        #     val_dis = val(model, val_loader, writer, e)
+        #     if val_dis < best_dis:
+        #         save_ckpt(model, optim, val_dis, e)
+        #         print("A model is saved!")
+        #         best_dis = val_dis
+
+        sche.step()
+
+        save_ckpt(model, optim, -1, e)
         model.train()
 
-        if tf_rate < 0.2:
+        if tf_rate < 0.2 and e >= 10:
             tf_rate += 0.01
 
         
@@ -179,5 +182,7 @@ if __name__ == '__main__':
 
     writer = SummaryWriter()
 
-    train(epochs, train_loader, val_loader, model, optimizer, writer)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.3)
+
+    train(epochs, train_loader, val_loader, model, optimizer, scheduler, writer)
 

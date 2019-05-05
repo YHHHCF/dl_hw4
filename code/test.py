@@ -22,8 +22,8 @@ def enablePrint():
 
 
 # predict without label on val dataset
-def test_val(model, val_loader, writer):
-    print("test with batch size: 1")
+def test_val(model, val_loader):
+    # print("test with batch size: 1")
     char = 32
     end_symb = 33
     first_node = (-1, append_char(None, char))
@@ -35,8 +35,7 @@ def test_val(model, val_loader, writer):
     
     with torch.no_grad():
         for inputs, targets in val_loader:
-            print("================")
-            print("term:", cnt)
+            # print("================")
 
             # debug
             # if not cnt == 40:
@@ -44,25 +43,26 @@ def test_val(model, val_loader, writer):
             #     continue
 
             label_str = toSentence(targets[0])
-            print("label:", label_str[1:-1])
+            # print("label:", label_str[1:-1])
                 
             prediction = model(inputs, targets, 'test')
 
             pred_str = toSentence(prediction)
             
-            print("pred sentence:", pred_str[1:-1])
+            # print("pred sentence:", pred_str[1:-1])
             
             dis = distance(pred_str, label_str)
 
-            print("label/pred length: {}, {}; distance: {}".format(len(label_str), len(pred_str), dis))
+            # print("label/pred length: {}, {}; distance: {}".format(len(label_str), len(pred_str), dis))
 
             # writer.add_scalar('test/distance', dis, cnt)
 
             total_dis += dis
+            print("term:", cnt, dis)
             cnt += 1
 
-            if cnt == 100:
-                break
+            # if cnt == 100:
+            #     break
             
     print("total_dis", total_dis / cnt)
     return None
@@ -111,21 +111,19 @@ if __name__ == '__main__':
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-    path = './../result/model_exp7_19.t7'
-    model, _ = load_ckpt(path, 'test')  
-    model = model.to(DEVICE)
+    # path = './../result/model_exp7_19.t7'
+    # model, _ = load_ckpt(path, 'test')  
+    # model = model.to(DEVICE)
 
-    writer = SummaryWriter()
+    # writer = SummaryWriter()
 
-    test(model, test_loader)
+    # test(model, test_loader)
 
-    # ckpts = [19]
-    # for i in ckpts:
-    #     path = './../result/model_exp7_' + str(i) + '.t7'
-    #     print(path)
-    #     model, _ = load_ckpt(path, 'test')  
-    #     model = model.to(DEVICE)
-    #     writer = SummaryWriter()
+    for i in range(30, 40):
+        path = './../result/model_exp8_' + str(i) + '.t7'
+        print(path)
+        model, _ = load_ckpt(path, 'test')  
+        model = model.to(DEVICE)
 
-    #     test_val(model, val_loader, writer)        
+        test_val(model, val_loader)        
 

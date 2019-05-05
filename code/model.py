@@ -14,7 +14,7 @@ num_letter = 34
 embed_dim = 256
 tf_rate = 0.0
 
-beam_width = 4
+beam_width = 8
 
 beam_alpha = 0.7
 
@@ -34,6 +34,7 @@ class LAS(nn.Module):
         self.speller = Speller()
 
         self.embedding = nn.Embedding(num_letter, embed_dim)
+        # self.embedding = nn.Linear(num_letter, embed_dim)
 
     # mode = train/val/test
     # when training, use tf; when val/test, use beam search
@@ -51,6 +52,7 @@ class LAS(nn.Module):
         for t in targets:
             if mode == 'train' or mode == 'val':
                 y_targets.append(t[1:])
+            # t = get_emb(t)
             t = self.embedding(t)
             emb_targets.append(t)
         packed_targets = rnn.pad_sequence(emb_targets)  # shape (max(l), b_size, emb-dim)
@@ -485,6 +487,16 @@ def get_mask(h_lens, mode):
             mask[i][:h_lens[i]] = 1
     
     return mask
+
+def get_emb(array):
+    global DEVICE
+    global num_letter
+
+    emb_array = torch.zeros((len(array), num_letter)).to(DEVICE)
+    for i in range(len(array)):
+        emb_array[i][array[i]] = 1
+
+    return emb_array
 
 
 # append the input char to the list
